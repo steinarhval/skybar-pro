@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kontroll</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+
+<body>
+
+  <h1>Kontrollpanel</h1>
+
+  <button id="loginBtn">Logg inn med Google</button>
+
+  <div id="userBox" style="margin-top:20px;"></div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+
+  <script>
+    const loginBtn = document.getElementById("loginBtn");
+    const userBox = document.getElementById("userBox");
+
+    loginBtn.addEventListener("click", async () => {
+      try {
+        const user = await App.ensureSignedInWithGoogle();
+        userBox.innerHTML = `
+          <strong>Innlogget som:</strong><br>
+          ${user.displayName}<br>
+          ${user.email}<br>
+          userId: ${user.uid}
+        `;
+      } catch (err) {
+        console.error(err);
+        alert("Innlogging feilet.");
+      }
+    });
+
+    App.auth.onAuthStateChanged((user) => {
+      if (user) {
+        userBox.innerHTML = `
+          <strong>Innlogget som:</strong><br>
+          ${user.displayName}<br>
+          ${user.email}<br>
+          userId: ${user.uid}
+        `;
+      }
+    });
+  </script>
+
+</body>
+</html>
