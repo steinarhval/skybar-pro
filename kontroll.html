@@ -8,14 +8,12 @@
 </head>
 
 <body>
-
   <h1>Kontrollpanel</h1>
 
   <button id="loginBtn">Logg inn med Google</button>
-<button id="startSessionBtn">Start ny session</button>
-<div id="sessionBox" style="margin-top:20px;"></div>
+  <button id="startSessionBtn">Start ny session</button>
 
-
+  <div id="sessionBox" style="margin-top:20px;"></div>
   <div id="userBox" style="margin-top:20px;"></div>
 
   <!-- Firebase SDK -->
@@ -26,56 +24,43 @@
   <script src="config.js"></script>
   <script src="app.js"></script>
 
-<script>
-  const loginBtn = document.getElementById("loginBtn");
-  const userBox = document.getElementById("userBox");
-  const startSessionBtn = document.getElementById("startSessionBtn");
-  const sessionBox = document.getElementById("sessionBox");
+  <script>
+    const loginBtn = document.getElementById("loginBtn");
+    const userBox = document.getElementById("userBox");
+    const startSessionBtn = document.getElementById("startSessionBtn");
+    const sessionBox = document.getElementById("sessionBox");
 
-  loginBtn.addEventListener("click", async () => {
-    try {
-      const user = await App.ensureSignedInWithGoogle();
-      userBox.innerHTML = `
-        <strong>Innlogget som:</strong><br>
-        ${user.displayName}<br>
-        ${user.email}<br>
-        userId: ${user.uid}
-      `;
-    } catch (err) {
-      console.error(err);
-      alert("Innlogging feilet.");
-    }
-  });
+    loginBtn.addEventListener("click", async () => {
+      try {
+        const user = await App.ensureSignedInWithGoogle();
+        userBox.innerHTML = `
+          <strong>Innlogget som:</strong><br>
+          ${user.displayName}<br>
+          ${user.email}<br>
+          userId: ${user.uid}
+        `;
+      } catch (err) {
+        console.error(err);
+        alert("Innlogging feilet.");
+      }
+    });
 
-  startSessionBtn.addEventListener("click", async () => {
-    try {
-      const res = await App.startOrReplaceSession();
-      const snap = await res.sessionRef.get();
-      const d = snap.data() || {};
-      sessionBox.innerHTML = `
-        <strong>Session startet:</strong><br>
-        sessionId: ${d.sessionId}<br>
-        joinCode: ${d.joinCode}<br>
-        docPath: sessions/${res.ownerId}
-      `;
-    } catch (err) {
-      console.error(err);
-      alert("Kunne ikke starte session.");
-    }
-  });
-
-  App.auth.onAuthStateChanged((user) => {
-    if (user) {
-      userBox.innerHTML = `
-        <strong>Innlogget som:</strong><br>
-        ${user.displayName}<br>
-        ${user.email}<br>
-        userId: ${user.uid}
-      `;
-    }
-  });
-</script>
-
+    startSessionBtn.addEventListener("click", async () => {
+      try {
+        const res = await App.startOrReplaceSession();
+        const snap = await res.sessionRef.get();
+        const d = snap.data() || {};
+        sessionBox.innerHTML = `
+          <strong>Session startet:</strong><br>
+          sessionId: ${d.sessionId}<br>
+          joinCode: ${d.joinCode}<br>
+          docPath: sessions/${res.ownerId}
+        `;
+      } catch (err) {
+        console.error(err);
+        alert("Kunne ikke starte session.");
+      }
+    });
 
     App.auth.onAuthStateChanged((user) => {
       if (user) {
@@ -88,6 +73,5 @@
       }
     });
   </script>
-
 </body>
 </html>
