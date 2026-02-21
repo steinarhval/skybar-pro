@@ -1,17 +1,3 @@
-/* app.js
-   Undervisningssystem v2 – Steg 0+1 (kontraktsriktig)
-
-   Steg 1 – Controller lease:
-   controllerWrite (til sessions/{sessionId}/state/live) setter:
-   - controllerId = clientId (localStorage)
-   - controllerTs = serverTimestamp
-   - controllerLeaseUntil = now + 60 sek
-
-   Viktig:
-   - Ingen auto-writes ved refresh (kun ved knappetrykk)
-   - Ingen takeover-dialog / håndheving (kun visning)
-*/
-
 (function () {
   "use strict";
 
@@ -25,8 +11,6 @@
 
   const CLIENT_ID_KEY = "uv2_clientId";
   const JOINCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
-  // Steg 1 – låst TTL
   const LEASE_TTL_MS = 60 * 1000;
 
   function getOrCreateClientId() {
@@ -39,7 +23,6 @@
   }
 
   function leaseUntilTimestampFromNow() {
-    // Kontrakt: "nå + 60 sek". Ingen håndheving i Steg 1, kun felt + visning.
     return firebase.firestore.Timestamp.fromMillis(Date.now() + LEASE_TTL_MS);
   }
 
@@ -78,7 +61,6 @@
       return res.user;
     },
 
-    // Refs (kontrakt)
     ownerRef: function (ownerId) {
       return db.collection("owners").doc(ownerId);
     },
@@ -95,15 +77,27 @@
       return db.collection("sessions").doc(sessionId).collection("state").doc("live");
     },
 
-    // Lytt (les) på state/live – ingen writes
-    listenLiveState: function (sessionId, onData) {
+    listenLiveState: function (sessionId, onData, onError) {
       const ref = this.liveStateRef(sessionId);
-      return ref.onSnapshot((snap) => {
-        onData(snap.exists ? (snap.data() || {}) : null);
-      });
+      return ref.onSnapshot(
+        (snap) => onData(snap.exists ? (snap.data() || {}) : null),
+        (err) => {
+          if (onError) onError(err);
+        }
+      );
     },
 
-    // Steg 1: Standard controller-write til state/live (merge)
+    getActiveSessionInfo: async function (ownerId) {
+      const oRef = this.ownerRef(ownerId);
+      const oSnap = await oRef.get();
+      if (!oSnap.exists) return null;
+
+      const o = oSnap.data() || {};
+      if (!o.activeSessionId || !o.activeJoinCode) return null;
+
+      return { ownerId, activeSessionId: o.activeSessionId, activeJoinCode: o.activeJoinCode };
+    },
+
     controllerWriteLiveState: async function (sessionId, patch) {
       const user = auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
@@ -120,23 +114,6 @@
       await ref.set(write, { merge: true });
     },
 
-    // Les aktiv session (ingen writes)
-    getActiveSessionInfo: async function (ownerId) {
-      const oRef = this.ownerRef(ownerId);
-      const oSnap = await oRef.get();
-      if (!oSnap.exists) return null;
-
-      const o = oSnap.data() || {};
-      if (!o.activeSessionId || !o.activeJoinCode) return null;
-
-      return {
-        ownerId,
-        activeSessionId: o.activeSessionId,
-        activeJoinCode: o.activeJoinCode
-      };
-    },
-
-    // Steg 0: Start/replace session (eksplisitt brukerhandling)
     startOrReplaceSession: async function (opts) {
       const user = auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
@@ -162,9 +139,9 @@
       }
 
       const joinCode = await generateUniqueJoinCode();
+
       const batch = db.batch();
 
-      // Replace-semantikk
       if (oldSessionId) {
         batch.set(this.sessionRef(oldSessionId), {
           status: "ended",
@@ -177,7 +154,6 @@
         batch.set(this.joinCodeRef(oldJoinCode), { active: false }, { merge: true });
       }
 
-      // Ny session
       batch.set(newSessionDocRef, {
         sessionId,
         ownerId,
@@ -190,7 +166,6 @@
         programId
       }, { merge: false });
 
-      // joinCodes routing
       batch.set(this.joinCodeRef(joinCode), {
         sessionId,
         ownerId,
@@ -198,14 +173,12 @@
         active: true
       }, { merge: false });
 
-      // owner-peker
       batch.set(ownerDocRef, {
         activeSessionId: sessionId,
         activeJoinCode: joinCode,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      // state/live init + Steg 1 lease-felter (skrevet kun ved knappetrykk)
       batch.set(this.liveStateRef(sessionId), {
         sessionId,
         status: "idle",
@@ -213,18 +186,17 @@
         roundId: null,
         question: null,
 
-        // Steg 1
         controllerId: clientId,
         controllerTs: firebase.firestore.FieldValue.serverTimestamp(),
         controllerLeaseUntil: leaseUntilTimestampFromNow()
       }, { merge: false });
 
+      // Viktig: hvis dette feiler får du typisk "Missing or insufficient permissions"
       await batch.commit();
 
       return { ownerId, sessionId, joinCode };
     }
   };
 
-  // Ingen auto-writes her.
   auth.onAuthStateChanged(() => {});
 })();

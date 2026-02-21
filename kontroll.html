@@ -15,6 +15,7 @@
 
   <div id="sessionBox" class="mt20"></div>
   <div id="leaseBox" class="mt20"></div>
+  <div id="errorBox" class="mt20"></div>
   <div id="userBox" class="mt20"></div>
 
   <!-- Firebase SDK -->
@@ -31,11 +32,20 @@
     const startSessionBtn = document.getElementById("startSessionBtn");
     const sessionBox = document.getElementById("sessionBox");
     const leaseBox = document.getElementById("leaseBox");
+    const errorBox = document.getElementById("errorBox");
 
     let activeSessionId = null;
     let unsubscribe = null;
     let leaseTicker = null;
     let lastState = null;
+
+    function setError(msg) {
+      if (!msg) {
+        errorBox.innerHTML = "";
+        return;
+      }
+      errorBox.innerHTML = `<strong>Feil:</strong><br><span class="mono">${msg}</span>`;
+    }
 
     function renderUser(user) {
       if (!user) {
@@ -51,18 +61,23 @@
       `;
     }
 
+    function toMillisMaybe(ts) {
+      if (!ts) return null;
+      if (typeof ts.toMillis === "function") return ts.toMillis();
+      // fallback hvis den kommer som {seconds, nanoseconds}
+      if (typeof ts.seconds === "number") return (ts.seconds * 1000) + Math.floor((ts.nanoseconds || 0) / 1e6);
+      return null;
+    }
+
     function formatLease(state) {
-      if (!state) return "Ingen state/live lest ennå.";
+      if (!state) {
+        return `<strong>Controller lease</strong><br>Ingen state/live lest ennå (mangler doc eller tilgang).`;
+      }
 
       const cid = state.controllerId || "(ikke satt)";
-      const ts = state.controllerTs || null;
-      const until = state.controllerLeaseUntil || null;
+      const untilMs = toMillisMaybe(state.controllerLeaseUntil);
 
       const nowMs = Date.now();
-
-      let untilMs = null;
-      if (until && typeof until.toMillis === "function") untilMs = until.toMillis();
-
       const active = (untilMs !== null) ? (untilMs > nowMs) : false;
       const remaining = (untilMs !== null) ? Math.max(0, Math.round((untilMs - nowMs) / 1000)) : null;
 
@@ -91,25 +106,36 @@
 
     function attachStateListener(sessionId) {
       if (unsubscribe) unsubscribe();
-      unsubscribe = App.listenLiveState(sessionId, (data) => {
-        lastState = data;
-        renderLease(data);
-      });
+
+      unsubscribe = App.listenLiveState(
+        sessionId,
+        (data) => {
+          lastState = data;
+          renderLease(data);
+        },
+        (err) => {
+          setError("Kunne ikke lese state/live: " + (err && err.message ? err.message : String(err)));
+        }
+      );
+
       startLeaseTicker();
     }
 
     loginBtn.addEventListener("click", async () => {
       try {
+        setError("");
         const user = await App.ensureSignedInWithGoogle();
         renderUser(user);
       } catch (err) {
         console.error(err);
-        alert("Innlogging feilet.");
+        setError(err && err.message ? err.message : String(err));
+        alert("Innlogging feilet: " + (err && err.message ? err.message : "ukjent feil"));
       }
     });
 
     startSessionBtn.addEventListener("click", async () => {
       try {
+        setError("");
         const res = await App.startOrReplaceSession({ saveResults: true, programId: null });
 
         activeSessionId = res.sessionId;
@@ -125,15 +151,15 @@
         attachStateListener(res.sessionId);
       } catch (err) {
         console.error(err);
-        alert("Kunne ikke starte session.");
+        const msg = (err && err.message) ? err.message : String(err);
+        setError(msg);
+        alert("Kunne ikke starte ny session: " + msg);
       }
     });
 
     App.auth.onAuthStateChanged(async (user) => {
       renderUser(user);
 
-      // Ingen auto-writes ved refresh.
-      // Men vi kan lese aktiv session og vise lease dersom den finnes.
       if (!user) {
         activeSessionId = null;
         lastState = null;
@@ -143,10 +169,13 @@
         leaseTicker = null;
         leaseBox.innerHTML = "";
         sessionBox.innerHTML = "";
+        setError("");
         return;
       }
 
+      // Ingen auto-writes ved refresh. Kun les og vis.
       try {
+        setError("");
         const info = await App.getActiveSessionInfo(user.uid);
         if (info && info.activeSessionId) {
           activeSessionId = info.activeSessionId;
@@ -157,9 +186,12 @@
             docPath: <span class="mono">sessions/${info.activeSessionId}</span>
           `;
           attachStateListener(info.activeSessionId);
+        } else {
+          leaseBox.innerHTML = `<strong>Controller lease</strong><br>Ingen aktiv session funnet på owner-peker.`;
         }
       } catch (e) {
         console.error(e);
+        setError(e && e.message ? e.message : String(e));
       }
     });
   </script>
