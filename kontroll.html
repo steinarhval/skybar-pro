@@ -13,8 +13,8 @@
   <button id="loginBtn">Logg inn med Google</button>
   <button id="startSessionBtn">Start ny session</button>
 
-  <div id="sessionBox" style="margin-top:20px;"></div>
-  <div id="userBox" style="margin-top:20px;"></div>
+  <div id="sessionBox" class="mt20"></div>
+  <div id="userBox" class="mt20"></div>
 
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
@@ -30,15 +30,24 @@
     const startSessionBtn = document.getElementById("startSessionBtn");
     const sessionBox = document.getElementById("sessionBox");
 
+    function renderUser(user) {
+      if (!user) {
+        userBox.innerHTML = "";
+        return;
+      }
+      userBox.innerHTML = `
+        <strong>Innlogget som:</strong><br>
+        ${user.displayName || ""}<br>
+        ${user.email || ""}<br>
+        ownerId (user.uid): ${user.uid}<br>
+        clientId (localStorage): ${App.getClientId()}
+      `;
+    }
+
     loginBtn.addEventListener("click", async () => {
       try {
         const user = await App.ensureSignedInWithGoogle();
-        userBox.innerHTML = `
-          <strong>Innlogget som:</strong><br>
-          ${user.displayName}<br>
-          ${user.email}<br>
-          userId: ${user.uid}
-        `;
+        renderUser(user);
       } catch (err) {
         console.error(err);
         alert("Innlogging feilet.");
@@ -47,14 +56,17 @@
 
     startSessionBtn.addEventListener("click", async () => {
       try {
-        const res = await App.startOrReplaceSession();
-        const snap = await res.sessionRef.get();
-        const d = snap.data() || {};
+        const res = await App.startOrReplaceSession({
+          saveResults: true,
+          programId: null
+        });
+
         sessionBox.innerHTML = `
           <strong>Session startet:</strong><br>
-          sessionId: ${d.sessionId}<br>
-          joinCode: ${d.joinCode}<br>
-          docPath: sessions/${res.ownerId}
+          sessionId: ${res.sessionId}<br>
+          joinCode: ${res.joinCode}<br>
+          ownerId: ${res.ownerId}<br>
+          docPath: sessions/${res.sessionId}
         `;
       } catch (err) {
         console.error(err);
@@ -63,17 +75,9 @@
     });
 
     App.auth.onAuthStateChanged((user) => {
-      if (user) {
-        userBox.innerHTML = `
-          <strong>Innlogget som:</strong><br>
-          ${user.displayName}<br>
-          ${user.email}<br>
-          userId: ${user.uid}
-        `;
-      }
+      // Kun les/vis. Ingen writes.
+      renderUser(user);
     });
   </script>
 </body>
 </html>
-
-

@@ -1,1 +1,14 @@
-# foreløpig tom #
+/* app.css – Steg 0: ingen inline styles. Ingen redesign. */
+
+body {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  margin: 16px;
+}
+
+button {
+  margin-right: 8px;
+}
+
+.mt20 {
+  margin-top: 20px;
+}
