@@ -1,4 +1,4 @@
-/* app.css – Steg 0: ingen inline styles. Ingen redesign. */
+/* app.css – Steg 0/1: ingen inline styles. Ingen redesign. */
 
 body {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -11,4 +11,8 @@ button {
 
 .mt20 {
   margin-top: 20px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }

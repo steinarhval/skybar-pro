@@ -14,6 +14,7 @@
   <button id="startSessionBtn">Start ny session</button>
 
   <div id="sessionBox" class="mt20"></div>
+  <div id="leaseBox" class="mt20"></div>
   <div id="userBox" class="mt20"></div>
 
   <!-- Firebase SDK -->
@@ -29,6 +30,12 @@
     const userBox = document.getElementById("userBox");
     const startSessionBtn = document.getElementById("startSessionBtn");
     const sessionBox = document.getElementById("sessionBox");
+    const leaseBox = document.getElementById("leaseBox");
+
+    let activeSessionId = null;
+    let unsubscribe = null;
+    let leaseTicker = null;
+    let lastState = null;
 
     function renderUser(user) {
       if (!user) {
@@ -39,9 +46,56 @@
         <strong>Innlogget som:</strong><br>
         ${user.displayName || ""}<br>
         ${user.email || ""}<br>
-        ownerId (user.uid): ${user.uid}<br>
-        clientId (localStorage): ${App.getClientId()}
+        ownerId (user.uid): <span class="mono">${user.uid}</span><br>
+        clientId (localStorage): <span class="mono">${App.getClientId()}</span>
       `;
+    }
+
+    function formatLease(state) {
+      if (!state) return "Ingen state/live lest ennå.";
+
+      const cid = state.controllerId || "(ikke satt)";
+      const ts = state.controllerTs || null;
+      const until = state.controllerLeaseUntil || null;
+
+      const nowMs = Date.now();
+
+      let untilMs = null;
+      if (until && typeof until.toMillis === "function") untilMs = until.toMillis();
+
+      const active = (untilMs !== null) ? (untilMs > nowMs) : false;
+      const remaining = (untilMs !== null) ? Math.max(0, Math.round((untilMs - nowMs) / 1000)) : null;
+
+      const mine = (cid === App.getClientId());
+
+      return `
+        <strong>Controller lease</strong><br>
+        controllerId: <span class="mono">${cid}</span><br>
+        status: ${active ? "aktiv" : "utløpt/ikke satt"}<br>
+        gjenstår: ${remaining === null ? "-" : (remaining + " sek")}<br>
+        min controller: ${mine ? "ja" : "nei"}
+      `;
+    }
+
+    function renderLease(state) {
+      leaseBox.innerHTML = formatLease(state);
+    }
+
+    function startLeaseTicker() {
+      if (leaseTicker) clearInterval(leaseTicker);
+      leaseTicker = setInterval(() => {
+        // Kun UI-oppdatering. Ingen writes.
+        renderLease(lastState);
+      }, 1000);
+    }
+
+    function attachStateListener(sessionId) {
+      if (unsubscribe) unsubscribe();
+      unsubscribe = App.listenLiveState(sessionId, (data) => {
+        lastState = data;
+        renderLease(data);
+      });
+      startLeaseTicker();
     }
 
     loginBtn.addEventListener("click", async () => {
@@ -56,27 +110,57 @@
 
     startSessionBtn.addEventListener("click", async () => {
       try {
-        const res = await App.startOrReplaceSession({
-          saveResults: true,
-          programId: null
-        });
+        const res = await App.startOrReplaceSession({ saveResults: true, programId: null });
+
+        activeSessionId = res.sessionId;
 
         sessionBox.innerHTML = `
           <strong>Session startet:</strong><br>
-          sessionId: ${res.sessionId}<br>
-          joinCode: ${res.joinCode}<br>
-          ownerId: ${res.ownerId}<br>
-          docPath: sessions/${res.sessionId}
+          sessionId: <span class="mono">${res.sessionId}</span><br>
+          joinCode: <span class="mono">${res.joinCode}</span><br>
+          ownerId: <span class="mono">${res.ownerId}</span><br>
+          docPath: <span class="mono">sessions/${res.sessionId}</span>
         `;
+
+        attachStateListener(res.sessionId);
       } catch (err) {
         console.error(err);
         alert("Kunne ikke starte session.");
       }
     });
 
-    App.auth.onAuthStateChanged((user) => {
-      // Kun les/vis. Ingen writes.
+    App.auth.onAuthStateChanged(async (user) => {
       renderUser(user);
+
+      // Ingen auto-writes ved refresh.
+      // Men vi kan lese aktiv session og vise lease dersom den finnes.
+      if (!user) {
+        activeSessionId = null;
+        lastState = null;
+        if (unsubscribe) unsubscribe();
+        unsubscribe = null;
+        if (leaseTicker) clearInterval(leaseTicker);
+        leaseTicker = null;
+        leaseBox.innerHTML = "";
+        sessionBox.innerHTML = "";
+        return;
+      }
+
+      try {
+        const info = await App.getActiveSessionInfo(user.uid);
+        if (info && info.activeSessionId) {
+          activeSessionId = info.activeSessionId;
+          sessionBox.innerHTML = `
+            <strong>Aktiv session (lest):</strong><br>
+            sessionId: <span class="mono">${info.activeSessionId}</span><br>
+            joinCode: <span class="mono">${info.activeJoinCode}</span><br>
+            docPath: <span class="mono">sessions/${info.activeSessionId}</span>
+          `;
+          attachStateListener(info.activeSessionId);
+        }
+      } catch (e) {
+        console.error(e);
+      }
     });
   </script>
 </body>
