@@ -98,10 +98,6 @@
         return;
       }
 
-      // Minimal voting-UI for Steg 3:
-      // - yesno -> Ja/Nei
-      // - multi hvis question.choices finnes -> knapper
-      // Ellers: venter
       const mode = state.mode;
 
       if (mode === "yesno") {
@@ -147,6 +143,7 @@
 
     async function submitVote(value) {
       if (!currentSessionId) return;
+
       if (!currentRoundId) {
         setMsg("Kan ikke stemme: mangler roundId.");
         return;
@@ -155,13 +152,17 @@
       setMsg("");
       try {
         const res = await App.submitVoteOnce(currentSessionId, currentRoundId, value);
+
         if (res.already) {
           setMsg('<span class="mono">Du har allerede stemt i denne runden (låst).</span>');
-        } else {
-          setMsg('<span class="mono">Takk! Stemmen er sendt.</span>');
+          voteLocked = true;
+          setVoteUILocked();
+          return;
         }
-        // Låsen kommer fra lock-listeneren, men vi kan også optimistisk disable UI:
+
+        // Kun én melding ved suksess
         voteLocked = true;
+        setMsg(""); // ingen ekstra “Takk!” her
         setVoteUILocked();
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
@@ -172,6 +173,7 @@
     function attachLock(sessionId, roundId) {
       if (unsubLock) unsubLock();
       voteLocked = false;
+      setMsg(""); // rydd meldinger ved ny runde
 
       const clientId = App.getClientId();
       unsubLock = App.listenVoteLock(
@@ -179,8 +181,13 @@
         roundId,
         clientId,
         (res) => {
+          const prev = voteLocked;
           voteLocked = res.exists === true;
-          // Oppdater vote-UI basert på siste state vi har i DOM (vi re-render på state-callback uansett)
+
+          // Hvis lock slår inn (f.eks. etter sync), vis låst-UI uten ekstra melding
+          if (!prev && voteLocked) {
+            setMsg("");
+          }
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
@@ -207,6 +214,7 @@
               if (unsubLock) unsubLock();
               unsubLock = null;
               voteLocked = false;
+              setMsg("");
             }
           }
 
