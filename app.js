@@ -14,6 +14,8 @@
   const JOINCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   const LEASE_TTL_MS = 60 * 1000;
 
+  const ALLOWED_MODES = new Set(["multi", "likert", "open", "wordcloud"]);
+
   function getOrCreateClientId() {
     let id = localStorage.getItem(CLIENT_ID_KEY);
     if (id && typeof id === "string" && id.length >= 8) return id;
@@ -42,11 +44,16 @@
     throw new Error("Kunne ikke generere unik joinCode (for mange kollisjoner).");
   }
 
+  function assertAllowedMode(mode) {
+    if (!ALLOWED_MODES.has(mode)) {
+      throw new Error('Ugyldig mode. Tillatt: "multi", "likert", "open", "wordcloud".');
+    }
+  }
+
   window.App = {
     db,
     auth,
 
-    // ---- Shared identity ----
     getClientId: function () {
       return getOrCreateClientId();
     },
@@ -57,7 +64,6 @@
     joinCodeRef: (joinCode) => db.collection("joinCodes").doc(joinCode),
     liveStateRef: (sessionId) => db.collection("sessions").doc(sessionId).collection("state").doc("live"),
 
-    // Steg 3 refs:
     roundVoteRef: function (sessionId, roundId, clientId) {
       return db.collection("sessions").doc(sessionId)
         .collection("rounds").doc(roundId)
@@ -113,24 +119,23 @@
       );
     },
 
-    // ---- Steg 3: Submit vote (en stemme per clientId per roundId) ----
-    submitVoteOnce: async function (sessionId, roundId, value) {
+    // ---- Steg 3: Submit vote (kontraktsriktig + mode i vote-doc) ----
+    submitVoteOnce: async function (sessionId, roundId, mode, value) {
       if (!sessionId) throw new Error("Mangler sessionId.");
       if (!roundId) throw new Error("Mangler roundId (venter på reset/ny runde).");
+      assertAllowedMode(mode);
 
       const clientId = getOrCreateClientId();
       const ref = this.roundVoteRef(sessionId, roundId, clientId);
 
-      // Transaction gir hard garanti: kan ikke overskrive eksisterende vote-doc
       const res = await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
-        if (snap.exists) {
-          return { ok: true, already: true };
-        }
+        if (snap.exists) return { ok: true, already: true };
 
         tx.set(ref, {
           clientId,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          mode,
           value
         }, { merge: false });
 
@@ -140,7 +145,7 @@
       return res;
     },
 
-    // ---- Existing (Steg 0/1) controller flow ----
+    // ---- Steg 0/1: controller flow ----
     ensureSignedInWithGoogle: async function () {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -228,7 +233,6 @@
         roundId: null,
         question: null,
 
-        // Steg 1 (lease)
         controllerId: clientId,
         controllerTs: firebase.firestore.FieldValue.serverTimestamp(),
         controllerLeaseUntil: leaseUntilTimestampFromNow()
