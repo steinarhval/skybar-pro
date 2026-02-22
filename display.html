@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <title>Display</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+
+<body>
+  <h1>Display</h1>
+
+  <div id="connectBox" class="mt20"></div>
+  <div id="stateBox" class="mt20"></div>
+  <div id="resultBox" class="mt20"></div>
+  <div id="msgBox" class="mt20"></div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+
+  <script>
+    const connectBox = document.getElementById("connectBox");
+    const stateBox = document.getElementById("stateBox");
+    const resultBox = document.getElementById("resultBox");
+    const msgBox = document.getElementById("msgBox");
+
+    let unsubState = null;
+    let unsubAgg = null;
+
+    let sessionId = null;
+    let joinCode = null;
+
+    let currentRoundId = null;
+    let currentMode = null;
+
+    function setMsg(html) {
+      msgBox.innerHTML = html || "";
+    }
+
+    function safeJson(v) {
+      try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+    }
+
+    function parseQuery() {
+      const p = new URLSearchParams(window.location.search);
+      const s = p.get("sessionId");
+      const j = p.get("joinCode");
+      return {
+        sessionId: s && s.trim() ? s.trim() : null,
+        joinCode: j && j.trim() ? j.trim().toUpperCase().trim() : null
+      };
+    }
+
+    function renderConnect() {
+      connectBox.innerHTML = `
+        <strong>Tilkobling</strong><br>
+        sessionId: <span class="mono">${sessionId || "-"}</span><br>
+        joinCode: <span class="mono">${joinCode || "-"}</span><br>
+        Tips: Åpne med <span class="mono">?joinCode=ABC123</span> eller <span class="mono">?sessionId=...</span>
+      `;
+    }
+
+    function renderState(state) {
+      if (!state) {
+        stateBox.innerHTML = `<strong>State</strong><br>Ingen state/live funnet (mangler doc eller ingen tilgang).`;
+        return;
+      }
+
+      stateBox.innerHTML = `
+        <strong>State (live)</strong><br>
+        status: <span class="mono">${state.status ?? "-"}</span><br>
+        mode: <span class="mono">${state.mode ?? "-"}</span><br>
+        roundId: <span class="mono">${state.roundId ?? "-"}</span><br>
+        question: <pre class="pre">${safeJson(state.question)}</pre>
+      `;
+    }
+
+    function clearResults() {
+      resultBox.innerHTML = "";
+    }
+
+    function renderWaitingForResults() {
+      resultBox.innerHTML = `<strong>Resultat</strong><br>Venter på <span class="mono">status="results"</span>.`;
+    }
+
+    function renderWaitingForAgg() {
+      resultBox.innerHTML = `<strong>Resultat</strong><br>Venter på aggregert data (agg)…`;
+    }
+
+    function renderMulti(agg) {
+      const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
+      const entries = Object.entries(counts).sort((a, b) => (b[1] || 0) - (a[1] || 0));
+
+      if (!entries.length) {
+        resultBox.innerHTML = `<strong>Resultat (MULTI)</strong><br>Ingen stemmer ennå.`;
+        return;
+      }
+
+      const rows = entries.map(([k, v]) => `<tr><td class="mono">${k}</td><td class="mono">${v}</td></tr>`).join("");
+
+      resultBox.innerHTML = `
+        <strong>Resultat (MULTI)</strong><br>
+        n: <span class="mono">${agg.n ?? 0}</span><br>
+        <table class="mt20">
+          <thead><tr><th>Valg</th><th>Antall</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function renderLikert(agg) {
+      const sum = typeof agg.sum === "number" ? agg.sum : 0;
+      const count = typeof agg.count === "number" ? agg.count : 0;
+      const avg = count > 0 ? (sum / count) : 0;
+
+      resultBox.innerHTML = `
+        <strong>Resultat (LIKERT)</strong><br>
+        n: <span class="mono">${agg.n ?? 0}</span><br>
+        sum: <span class="mono">${sum}</span><br>
+        count: <span class="mono">${count}</span><br>
+        snitt: <span class="mono">${avg.toFixed(2)}</span>
+      `;
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function renderOpen(agg) {
+      const texts = Array.isArray(agg.texts) ? agg.texts : [];
+      if (!texts.length) {
+        resultBox.innerHTML = `<strong>Resultat (OPEN)</strong><br>Ingen svar ennå.`;
+        return;
+      }
+
+      const items = texts
+        .slice(-200) // enkel beskyttelse i UI
+        .map(t => `<li>${escapeHtml(t)}</li>`)
+        .join("");
+
+      resultBox.innerHTML = `
+        <strong>Resultat (OPEN)</strong><br>
+        n: <span class="mono">${agg.n ?? texts.length}</span><br>
+        <ul class="mt20">${items}</ul>
+      `;
+    }
+
+    function renderWordcloud(agg) {
+      const freq = (agg && agg.freq && typeof agg.freq === "object") ? agg.freq : {};
+      const entries = Object.entries(freq).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, 50);
+
+      if (!entries.length) {
+        resultBox.innerHTML = `<strong>Resultat (WORDCLOUD)</strong><br>Ingen ord ennå.`;
+        return;
+      }
+
+      const rows = entries.map(([w, c]) => `<tr><td class="mono">${escapeHtml(w)}</td><td class="mono">${c}</td></tr>`).join("");
+
+      resultBox.innerHTML = `
+        <strong>Resultat (WORDCLOUD)</strong><br>
+        n: <span class="mono">${agg.n ?? 0}</span><br>
+        <table class="mt20">
+          <thead><tr><th>Ord</th><th>Antall</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function renderAgg(agg) {
+      if (!agg) {
+        renderWaitingForAgg();
+        return;
+      }
+
+      const mode = agg.mode || currentMode;
+
+      if (mode === "multi") return renderMulti(agg);
+      if (mode === "likert") return renderLikert(agg);
+      if (mode === "open") return renderOpen(agg);
+      if (mode === "wordcloud") return renderWordcloud(agg);
+
+      resultBox.innerHTML = `<strong>Resultat</strong><br>Ukjent mode i agg: <span class="mono">${escapeHtml(mode)}</span>`;
+    }
+
+    function attachAgg(sessionId, roundId) {
+      if (unsubAgg) unsubAgg();
+      unsubAgg = App.listenAgg(
+        sessionId,
+        roundId,
+        (agg) => renderAgg(agg),
+        (err) => {
+          const m = err && err.message ? err.message : String(err);
+          setMsg("<strong>Kunne ikke lese agg:</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
+        }
+      );
+    }
+
+    function attachState(sessionId) {
+      if (unsubState) unsubState();
+
+      unsubState = App.listenLiveState(
+        sessionId,
+        (state) => {
+          renderState(state);
+
+          if (!state) {
+            clearResults();
+            return;
+          }
+
+          const status = state.status || null;
+          const roundId = state.roundId || null;
+          const mode = state.mode || null;
+
+          currentMode = mode;
+
+          if (status !== "results") {
+            if (unsubAgg) { unsubAgg(); unsubAgg = null; }
+            renderWaitingForResults();
+            return;
+          }
+
+          if (!roundId) {
+            if (unsubAgg) { unsubAgg(); unsubAgg = null; }
+            renderWaitingForAgg();
+            return;
+          }
+
+          if (roundId !== currentRoundId) {
+            currentRoundId = roundId;
+            attachAgg(sessionId, roundId);
+          }
+        },
+        (err) => {
+          const m = err && err.message ? err.message : String(err);
+          setMsg("<strong>Kunne ikke lese state/live:</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
+        }
+      );
+    }
+
+    async function boot() {
+      const q = parseQuery();
+      joinCode = q.joinCode;
+      sessionId = q.sessionId;
+
+      if (!sessionId && joinCode) {
+        try {
+          const res = await App.resolveJoinCode(joinCode);
+          sessionId = res.sessionId;
+        } catch (e) {
+          const m = e && e.message ? e.message : String(e);
+          setMsg("<strong>Kunne ikke resolve joinCode:</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
+        }
+      }
+
+      renderConnect();
+
+      if (!sessionId) {
+        setMsg("Mangler sessionId. Åpne display med <span class=\"mono\">?joinCode=ABC123</span> eller <span class=\"mono\">?sessionId=...</span>.");
+        renderWaitingForResults();
+        return;
+      }
+
+      attachState(sessionId);
+      renderWaitingForResults();
+    }
+
+    boot();
+  </script>
+</body>
+</html>

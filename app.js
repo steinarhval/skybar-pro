@@ -70,7 +70,14 @@
         .collection("votes").doc(clientId);
     },
 
-    // ---- Steg 2: Join routing (READ ONLY) ----
+    // NEW: agg doc ref
+    aggRef: function (sessionId, roundId) {
+      return db.collection("sessions").doc(sessionId)
+        .collection("rounds").doc(roundId)
+        .doc("agg");
+    },
+
+    // ---- Join routing (READ ONLY) ----
     resolveJoinCode: async function (joinCode) {
       const code = (joinCode || "").toUpperCase();
       if (!/^[A-Z0-9]{6}$/.test(code)) throw new Error("JoinCode må være 6 tegn (A–Z/0–9).");
@@ -119,7 +126,16 @@
       );
     },
 
-    // ---- Steg 3: Submit vote (kontraktsriktig + mode i vote-doc) ----
+    // NEW: listen agg doc
+    listenAgg: function (sessionId, roundId, onData, onError) {
+      const ref = this.aggRef(sessionId, roundId);
+      return ref.onSnapshot(
+        (snap) => onData(snap.exists ? (snap.data() || {}) : null),
+        (err) => onError && onError(err)
+      );
+    },
+
+    // ---- Submit vote ----
     submitVoteOnce: async function (sessionId, roundId, mode, value) {
       if (!sessionId) throw new Error("Mangler sessionId.");
       if (!roundId) throw new Error("Mangler roundId (venter på reset/ny runde).");
@@ -145,7 +161,7 @@
       return res;
     },
 
-    // ---- Steg 0/1: controller flow ----
+    // ---- Controller/Session ----
     ensureSignedInWithGoogle: async function () {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
