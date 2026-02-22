@@ -153,17 +153,11 @@
       try {
         const res = await App.submitVoteOnce(currentSessionId, currentRoundId, value);
 
-        if (res.already) {
-          setMsg('<span class="mono">Du har allerede stemt i denne runden (låst).</span>');
-          voteLocked = true;
-          setVoteUILocked();
-          return;
-        }
-
-        // Kun én melding ved suksess
+        // Viktig: ved already => vi viser kun låst-UI, ingen ekstra msgBox-tekst
         voteLocked = true;
-        setMsg(""); // ingen ekstra “Takk!” her
+        setMsg("");
         setVoteUILocked();
+        return;
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
         setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + msg + "</span>");
@@ -181,13 +175,7 @@
         roundId,
         clientId,
         (res) => {
-          const prev = voteLocked;
           voteLocked = res.exists === true;
-
-          // Hvis lock slår inn (f.eks. etter sync), vis låst-UI uten ekstra melding
-          if (!prev && voteLocked) {
-            setMsg("");
-          }
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
