@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <title>Innhenting</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+
+<body>
+  <h1>Innhenting</h1>
+
+  <div id="infoBox" class="mt20"></div>
+  <div id="stateBox" class="mt20"></div>
+  <div id="msgBox" class="mt20"></div>
+
+  <div class="mt20">
+    <button id="backBtn">Tilbake</button>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+
+  <script>
+    const infoBox = document.getElementById("infoBox");
+    const stateBox = document.getElementById("stateBox");
+    const msgBox = document.getElementById("msgBox");
+    const backBtn = document.getElementById("backBtn");
+
+    let unsub = null;
+
+    function setMsg(html) {
+      msgBox.innerHTML = html || "";
+    }
+
+    function renderInfo(sessionId, joinCode) {
+      infoBox.innerHTML = `
+        <strong>Tilkobling</strong><br>
+        sessionId: <span class="mono">${sessionId || "(mangler)"}</span><br>
+        joinCode: <span class="mono">${joinCode || "(mangler)"}</span><br>
+        clientId: <span class="mono">${App.getClientId()}</span>
+      `;
+    }
+
+    function safeJson(v) {
+      try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+    }
+
+    function renderState(state) {
+      if (!state) {
+        stateBox.innerHTML = `<strong>State</strong><br>Ingen state/live funnet (mangler doc eller ingen tilgang).`;
+        return;
+      }
+
+      // Minimal visning – ingen UI-design, ingen logikk
+      stateBox.innerHTML = `
+        <strong>State (live)</strong><br>
+        status: <span class="mono">${state.status ?? "-"}</span><br>
+        mode: <span class="mono">${state.mode ?? "-"}</span><br>
+        roundId: <span class="mono">${state.roundId ?? "-"}</span><br>
+        question: <pre class="pre">${safeJson(state.question)}</pre>
+      `;
+    }
+
+    function attach(sessionId) {
+      if (unsub) unsub();
+
+      unsub = App.listenLiveState(
+        sessionId,
+        (data) => {
+          renderState(data);
+        },
+        (err) => {
+          const msg = err && err.message ? err.message : String(err);
+          setMsg('<strong>Kunne ikke lese state/live:</strong><br><span class="mono">' + msg + "</span>");
+        }
+      );
+    }
+
+    backBtn.addEventListener("click", () => {
+      window.location.href = "join.html";
+    });
+
+    // Init – kun lesing fra localStorage. Ingen writes.
+    const p = App.getParticipantSession();
+    if (!p || !p.sessionId || !p.joinCode) {
+      renderInfo(null, null);
+      setMsg('Mangler join-informasjon. Gå til <span class="mono">join.html</span> og skriv inn kode.');
+    } else {
+      renderInfo(p.sessionId, p.joinCode);
+      attach(p.sessionId);
+    }
+  </script>
+</body>
+</html>

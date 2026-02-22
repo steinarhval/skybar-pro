@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <title>Join</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+
+<body>
+  <h1>Delta</h1>
+
+  <p>Skriv inn join-kode (6 tegn).</p>
+
+  <div class="mt20">
+    <input id="codeInput" class="input" type="text" inputmode="text" autocomplete="one-time-code" maxlength="6" placeholder="ABC123" />
+    <button id="joinBtn">Bli med</button>
+  </div>
+
+  <div id="msgBox" class="mt20"></div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+
+  <script>
+    const codeInput = document.getElementById("codeInput");
+    const joinBtn = document.getElementById("joinBtn");
+    const msgBox = document.getElementById("msgBox");
+
+    function setMsg(html) {
+      msgBox.innerHTML = html || "";
+    }
+
+    function normalizeCode(v) {
+      return (v || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    }
+
+    async function doJoin() {
+      setMsg("");
+      const code = normalizeCode(codeInput.value);
+      codeInput.value = code;
+
+      if (code.length !== 6) {
+        setMsg('<strong>Ugyldig kode.</strong> Koden må være 6 tegn (A–Z/0–9).');
+        return;
+      }
+
+      try {
+        const res = await App.resolveJoinCode(code);
+        // Lagre lokalt for innhenting.html (ingen Firestore-writes)
+        App.setParticipantSession(res.sessionId, code);
+
+        // Naviger
+        window.location.href = "innhenting.html";
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        setMsg('<strong>Kunne ikke bli med:</strong><br><span class="mono">' + msg + "</span>");
+      }
+    }
+
+    joinBtn.addEventListener("click", doJoin);
+
+    codeInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") doJoin();
+    });
+
+    codeInput.addEventListener("input", () => {
+      codeInput.value = normalizeCode(codeInput.value);
+    });
+  </script>
+</body>
+</html>
