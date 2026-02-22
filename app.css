@@ -29,3 +29,19 @@ button {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.btnRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 10px 14px;
+  font-size: 16px;
+}
+
+.btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

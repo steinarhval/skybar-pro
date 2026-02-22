@@ -17,6 +17,7 @@
   function getOrCreateClientId() {
     let id = localStorage.getItem(CLIENT_ID_KEY);
     if (id && typeof id === "string" && id.length >= 8) return id;
+
     id = "c_" + Date.now().toString(36) + "_" + Math.random().toString(16).slice(2);
     localStorage.setItem(CLIENT_ID_KEY, id);
     return id;
@@ -55,6 +56,13 @@
     sessionRef: (sessionId) => db.collection("sessions").doc(sessionId),
     joinCodeRef: (joinCode) => db.collection("joinCodes").doc(joinCode),
     liveStateRef: (sessionId) => db.collection("sessions").doc(sessionId).collection("state").doc("live"),
+
+    // Steg 3 refs:
+    roundVoteRef: function (sessionId, roundId, clientId) {
+      return db.collection("sessions").doc(sessionId)
+        .collection("rounds").doc(roundId)
+        .collection("votes").doc(clientId);
+    },
 
     // ---- Steg 2: Join routing (READ ONLY) ----
     resolveJoinCode: async function (joinCode) {
@@ -97,7 +105,42 @@
       );
     },
 
-    // ---- Existing (Steg 0/1) controller flow (unchanged semantics) ----
+    listenVoteLock: function (sessionId, roundId, clientId, onData, onError) {
+      const ref = this.roundVoteRef(sessionId, roundId, clientId);
+      return ref.onSnapshot(
+        (snap) => onData({ exists: snap.exists, data: snap.exists ? (snap.data() || {}) : null }),
+        (err) => onError && onError(err)
+      );
+    },
+
+    // ---- Steg 3: Submit vote (en stemme per clientId per roundId) ----
+    submitVoteOnce: async function (sessionId, roundId, value) {
+      if (!sessionId) throw new Error("Mangler sessionId.");
+      if (!roundId) throw new Error("Mangler roundId (venter på reset/ny runde).");
+
+      const clientId = getOrCreateClientId();
+      const ref = this.roundVoteRef(sessionId, roundId, clientId);
+
+      // Transaction gir hard garanti: kan ikke overskrive eksisterende vote-doc
+      const res = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (snap.exists) {
+          return { ok: true, already: true };
+        }
+
+        tx.set(ref, {
+          clientId,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          value
+        }, { merge: false });
+
+        return { ok: true, already: false };
+      });
+
+      return res;
+    },
+
+    // ---- Existing (Steg 0/1) controller flow ----
     ensureSignedInWithGoogle: async function () {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;

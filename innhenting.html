@@ -12,6 +12,7 @@
 
   <div id="infoBox" class="mt20"></div>
   <div id="stateBox" class="mt20"></div>
+  <div id="voteBox" class="mt20"></div>
   <div id="msgBox" class="mt20"></div>
 
   <div class="mt20">
@@ -27,20 +28,28 @@
   <script>
     const infoBox = document.getElementById("infoBox");
     const stateBox = document.getElementById("stateBox");
+    const voteBox = document.getElementById("voteBox");
     const msgBox = document.getElementById("msgBox");
     const backBtn = document.getElementById("backBtn");
 
-    let unsub = null;
+    let unsubState = null;
+    let unsubLock = null;
+
+    let currentSessionId = null;
+    let currentJoinCode = null;
+
+    let currentRoundId = null;
+    let voteLocked = false;
 
     function setMsg(html) {
       msgBox.innerHTML = html || "";
     }
 
-    function renderInfo(sessionId, joinCode) {
+    function renderInfo() {
       infoBox.innerHTML = `
         <strong>Tilkobling</strong><br>
-        sessionId: <span class="mono">${sessionId || "(mangler)"}</span><br>
-        joinCode: <span class="mono">${joinCode || "(mangler)"}</span><br>
+        sessionId: <span class="mono">${currentSessionId || "(mangler)"}</span><br>
+        joinCode: <span class="mono">${currentJoinCode || "(mangler)"}</span><br>
         clientId: <span class="mono">${App.getClientId()}</span>
       `;
     }
@@ -55,7 +64,6 @@
         return;
       }
 
-      // Minimal visning – ingen UI-design, ingen logikk
       stateBox.innerHTML = `
         <strong>State (live)</strong><br>
         status: <span class="mono">${state.status ?? "-"}</span><br>
@@ -65,13 +73,144 @@
       `;
     }
 
-    function attach(sessionId) {
-      if (unsub) unsub();
+    function clearVoteUI() {
+      voteBox.innerHTML = "";
+    }
 
-      unsub = App.listenLiveState(
+    function setVoteUIWaiting() {
+      voteBox.innerHTML = `<strong>Stemme</strong><br>Venter på aktiv roundId (reset) og mode/spørsmål.`;
+    }
+
+    function setVoteUILocked() {
+      voteBox.innerHTML = `<strong>Stemme</strong><br><span class="mono">Takk! Stemmen er registrert og låst for denne runden.</span>`;
+    }
+
+    function renderVoteUIForState(state) {
+      if (!state || !state.roundId) {
+        clearVoteUI();
+        setVoteUIWaiting();
+        return;
+      }
+
+      if (voteLocked) {
+        clearVoteUI();
+        setVoteUILocked();
+        return;
+      }
+
+      // Minimal voting-UI for Steg 3:
+      // - yesno -> Ja/Nei
+      // - multi hvis question.choices finnes -> knapper
+      // Ellers: venter
+      const mode = state.mode;
+
+      if (mode === "yesno") {
+        voteBox.innerHTML = `
+          <strong>Stemme (YES/NO)</strong>
+          <div class="btnRow mt20">
+            <button class="btn" id="btnYes">Ja</button>
+            <button class="btn" id="btnNo">Nei</button>
+          </div>
+        `;
+        document.getElementById("btnYes").addEventListener("click", () => submitVote(true));
+        document.getElementById("btnNo").addEventListener("click", () => submitVote(false));
+        return;
+      }
+
+      const q = state.question || null;
+      const choices = q && Array.isArray(q.choices) ? q.choices : null;
+
+      if (mode === "multi" && choices && choices.length >= 2) {
+        const buttons = choices.map((c, idx) => {
+          const label = (c && (c.label || c.text)) ? (c.label || c.text) : ("Valg " + (idx + 1));
+          const value = (c && c.id) ? c.id : label;
+          return `<button class="btn" data-v="${encodeURIComponent(String(value))}">${label}</button>`;
+        }).join("");
+
+        voteBox.innerHTML = `
+          <strong>Stemme (MULTI)</strong>
+          <div class="btnRow mt20" id="choiceRow">${buttons}</div>
+        `;
+
+        document.getElementById("choiceRow").addEventListener("click", (ev) => {
+          const btn = ev.target.closest("button[data-v]");
+          if (!btn) return;
+          const v = decodeURIComponent(btn.getAttribute("data-v"));
+          submitVote(v);
+        });
+        return;
+      }
+
+      clearVoteUI();
+      setVoteUIWaiting();
+    }
+
+    async function submitVote(value) {
+      if (!currentSessionId) return;
+      if (!currentRoundId) {
+        setMsg("Kan ikke stemme: mangler roundId.");
+        return;
+      }
+
+      setMsg("");
+      try {
+        const res = await App.submitVoteOnce(currentSessionId, currentRoundId, value);
+        if (res.already) {
+          setMsg('<span class="mono">Du har allerede stemt i denne runden (låst).</span>');
+        } else {
+          setMsg('<span class="mono">Takk! Stemmen er sendt.</span>');
+        }
+        // Låsen kommer fra lock-listeneren, men vi kan også optimistisk disable UI:
+        voteLocked = true;
+        setVoteUILocked();
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + msg + "</span>");
+      }
+    }
+
+    function attachLock(sessionId, roundId) {
+      if (unsubLock) unsubLock();
+      voteLocked = false;
+
+      const clientId = App.getClientId();
+      unsubLock = App.listenVoteLock(
         sessionId,
-        (data) => {
-          renderState(data);
+        roundId,
+        clientId,
+        (res) => {
+          voteLocked = res.exists === true;
+          // Oppdater vote-UI basert på siste state vi har i DOM (vi re-render på state-callback uansett)
+        },
+        (err) => {
+          const msg = err && err.message ? err.message : String(err);
+          setMsg('<strong>Kunne ikke lese vote-lock:</strong><br><span class="mono">' + msg + "</span>");
+        }
+      );
+    }
+
+    function attachState(sessionId) {
+      if (unsubState) unsubState();
+
+      unsubState = App.listenLiveState(
+        sessionId,
+        (state) => {
+          renderState(state);
+
+          const newRoundId = state && state.roundId ? state.roundId : null;
+
+          if (newRoundId !== currentRoundId) {
+            currentRoundId = newRoundId;
+            if (currentRoundId) {
+              attachLock(currentSessionId, currentRoundId);
+            } else {
+              if (unsubLock) unsubLock();
+              unsubLock = null;
+              voteLocked = false;
+            }
+          }
+
+          renderVoteUIForState(state);
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
@@ -84,14 +223,17 @@
       window.location.href = "join.html";
     });
 
-    // Init – kun lesing fra localStorage. Ingen writes.
+    // Init – kun localStorage reads. Ingen writes.
     const p = App.getParticipantSession();
     if (!p || !p.sessionId || !p.joinCode) {
-      renderInfo(null, null);
       setMsg('Mangler join-informasjon. Gå til <span class="mono">join.html</span> og skriv inn kode.');
+      clearVoteUI();
+      setVoteUIWaiting();
     } else {
-      renderInfo(p.sessionId, p.joinCode);
-      attach(p.sessionId);
+      currentSessionId = p.sessionId;
+      currentJoinCode = p.joinCode;
+      renderInfo();
+      attachState(currentSessionId);
     }
   </script>
 </body>
