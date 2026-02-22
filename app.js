@@ -15,6 +15,7 @@
   const LEASE_TTL_MS = 60 * 1000;
 
   const ALLOWED_MODES = new Set(["multi", "likert", "open", "wordcloud"]);
+  const ALLOWED_STATUSES = new Set(["idle", "collect", "results"]);
 
   function getOrCreateClientId() {
     let id = localStorage.getItem(CLIENT_ID_KEY);
@@ -50,6 +51,16 @@
     }
   }
 
+  function assertAllowedStatus(status) {
+    if (!ALLOWED_STATUSES.has(status)) {
+      throw new Error('Ugyldig status. Tillatt: "idle", "collect", "results".');
+    }
+  }
+
+  function makeRoundId() {
+    return "r_" + Date.now().toString(36);
+  }
+
   window.App = {
     db,
     auth,
@@ -70,7 +81,7 @@
         .collection("votes").doc(clientId);
     },
 
-    // NEW: agg doc ref
+    // agg doc ref
     aggRef: function (sessionId, roundId) {
       return db.collection("sessions").doc(sessionId)
         .collection("rounds").doc(roundId)
@@ -126,7 +137,6 @@
       );
     },
 
-    // NEW: listen agg doc
     listenAgg: function (sessionId, roundId, onData, onError) {
       const ref = this.aggRef(sessionId, roundId);
       return ref.onSnapshot(
@@ -256,6 +266,38 @@
 
       await batch.commit();
       return { ownerId, sessionId, joinCode };
+    },
+
+    // ---- Controller: state writes (Steg 5 helper) ----
+    startMultiYesNo: async function (sessionId) {
+      if (!sessionId) throw new Error("Mangler sessionId.");
+      const roundId = makeRoundId();
+
+      const ref = this.liveStateRef(sessionId);
+
+      // Ingen svar i state. Kun kontrollfelt for aktiv runde.
+      await ref.set({
+        status: "collect",
+        mode: "multi",
+        roundId,
+        question: {
+          choices: [
+            { id: "yes", label: "ja" },
+            { id: "no", label: "nei" }
+          ]
+        }
+      }, { merge: true });
+
+      return { roundId };
+    },
+
+    setLiveStatus: async function (sessionId, status) {
+      if (!sessionId) throw new Error("Mangler sessionId.");
+      assertAllowedStatus(status);
+
+      const ref = this.liveStateRef(sessionId);
+      await ref.set({ status }, { merge: true });
+      return { status };
     }
   };
 

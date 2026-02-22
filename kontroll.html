@@ -13,6 +13,9 @@
   <button id="loginBtn">Logg inn med Google</button>
   <button id="startSessionBtn">Start ny session</button>
 
+  <!-- NY: minimal controller controls -->
+  <div id="controlsBox" class="mt20"></div>
+
   <div id="sessionBox" class="mt20"></div>
   <div id="leaseBox" class="mt20"></div>
   <div id="errorBox" class="mt20"></div>
@@ -33,6 +36,7 @@
     const sessionBox = document.getElementById("sessionBox");
     const leaseBox = document.getElementById("leaseBox");
     const errorBox = document.getElementById("errorBox");
+    const controlsBox = document.getElementById("controlsBox");
 
     let activeSessionId = null;
     let unsubscribe = null;
@@ -64,7 +68,6 @@
     function toMillisMaybe(ts) {
       if (!ts) return null;
       if (typeof ts.toMillis === "function") return ts.toMillis();
-      // fallback hvis den kommer som {seconds, nanoseconds}
       if (typeof ts.seconds === "number") return (ts.seconds * 1000) + Math.floor((ts.nanoseconds || 0) / 1e6);
       return null;
     }
@@ -96,11 +99,62 @@
       leaseBox.innerHTML = formatLease(state);
     }
 
+    function renderControls() {
+      if (!activeSessionId) {
+        controlsBox.innerHTML = `<strong>State quick controls</strong><br>Start/velg en aktiv session først.`;
+        return;
+      }
+
+      const status = lastState && lastState.status ? lastState.status : "(ukjent)";
+      const roundId = lastState && lastState.roundId ? lastState.roundId : "-";
+      const mode = lastState && lastState.mode ? lastState.mode : "-";
+
+      const canToggle = (status === "collect" || status === "results");
+      const toggleLabel = (status === "results") ? "Tilbake til collect" : "Vis resultater";
+
+      controlsBox.innerHTML = `
+        <strong>State quick controls</strong><br>
+        status: <span class="mono">${status}</span> |
+        mode: <span class="mono">${mode}</span> |
+        roundId: <span class="mono">${roundId}</span><br><br>
+        <button id="startYesNoBtn">Start Ja/Nei (collect)</button>
+        <button id="toggleResultsBtn" ${canToggle ? "" : "disabled"}>${toggleLabel}</button>
+      `;
+
+      document.getElementById("startYesNoBtn").addEventListener("click", async () => {
+        try {
+          setError("");
+          const res = await App.startMultiYesNo(activeSessionId);
+          // Ingen auto-write ellers – men dette var et eksplisitt klikk.
+          // Listener vil oppdatere lastState når Firestore endrer seg.
+          alert("Ny runde startet: " + res.roundId);
+        } catch (err) {
+          console.error(err);
+          const msg = (err && err.message) ? err.message : String(err);
+          setError(msg);
+          alert("Kunne ikke starte Ja/Nei: " + msg);
+        }
+      });
+
+      document.getElementById("toggleResultsBtn").addEventListener("click", async () => {
+        try {
+          setError("");
+          const cur = lastState && lastState.status ? lastState.status : null;
+          const next = (cur === "results") ? "collect" : "results";
+          await App.setLiveStatus(activeSessionId, next);
+        } catch (err) {
+          console.error(err);
+          const msg = (err && err.message) ? err.message : String(err);
+          setError(msg);
+          alert("Kunne ikke endre status: " + msg);
+        }
+      });
+    }
+
     function startLeaseTicker() {
       if (leaseTicker) clearInterval(leaseTicker);
       leaseTicker = setInterval(() => {
-        // Kun UI-oppdatering. Ingen writes.
-        renderLease(lastState);
+        renderLease(lastState); // Kun UI. Ingen writes.
       }, 1000);
     }
 
@@ -112,6 +166,7 @@
         (data) => {
           lastState = data;
           renderLease(data);
+          renderControls();
         },
         (err) => {
           setError("Kunne ikke lese state/live: " + (err && err.message ? err.message : String(err)));
@@ -169,6 +224,7 @@
         leaseTicker = null;
         leaseBox.innerHTML = "";
         sessionBox.innerHTML = "";
+        controlsBox.innerHTML = "";
         setError("");
         return;
       }
@@ -188,6 +244,7 @@
           attachStateListener(info.activeSessionId);
         } else {
           leaseBox.innerHTML = `<strong>Controller lease</strong><br>Ingen aktiv session funnet på owner-peker.`;
+          renderControls();
         }
       } catch (e) {
         console.error(e);
