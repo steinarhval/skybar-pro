@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidJoinCode(id) {
+      return id.matches('^[A-Z0-9]{6}$');
+    }
+
+    function isString(x) { return x is string; }
+    function isNumber(x) { return x is number; }
+    function isMap(x) { return x is map; }
+
+    // --- Public: join routing (read only) ---
+    match /joinCodes/{joinCode} {
+      allow read: if isValidJoinCode(joinCode);
+      allow write: if isSignedIn(); // controller/admin only (kan strammes mer senere per ownerId)
+    }
+
+    // --- Owners (auth only) ---
+    match /owners/{ownerId} {
+      allow read, write: if isSignedIn() && request.auth.uid == ownerId;
+    }
+
+    // --- Sessions ---
+    match /sessions/{sessionId} {
+
+      // Session metadata (auth only). Display/deltaker trenger ikke lese dette nå.
+      allow read, write: if isSignedIn();
+
+      // --- Live state ---
+      match /state/{docId} {
+        allow read: if docId == "live";      // Display + deltaker kan lese state/live
+        allow write: if isSignedIn();        // Kun controller (auth)
+      }
+
+      // --- Rounds ---
+      match /rounds/{roundId} {
+
+        // Aggregated results: display reads only
+        match /agg/{docId} {
+          allow read: if docId == "live";
+          allow write: if false; // kun server (Admin SDK) skal skrive
+        }
+
+        // Votes: participant create-only, never update/delete
+        match /votes/{clientId} {
+          allow read: if false; // display skal ikke lese rå votes
+
+          allow create: if
+            // kun create (ikke update)
+            !exists(/databases/$(database)/documents/sessions/$(sessionId)/rounds/$(roundId)/votes/$(clientId))
+            // grunnleggende struktur
+            && isMap(request.resource.data)
+            && request.resource.data.keys().hasOnly(['clientId', 'createdAt', 'mode', 'value'])
+            && request.resource.data.clientId == clientId
+            && isString(request.resource.data.mode)
+            // createdAt skal settes av serverTimestamp fra klient (tillates som timestamp)
+            ;
+
+          allow update, delete: if false;
+        }
+      }
+    }
+  }
+}
