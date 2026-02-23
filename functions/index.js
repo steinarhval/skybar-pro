@@ -52,8 +52,8 @@ exports.onVoteCreated = functions.firestore
 
     const value = vote.value;
 
-    const roundRef = db.collection("sessions").doc(sessionId).collection("rounds").doc(roundId);
-    const aggRef = roundRef.doc("agg"); // <-- DOKUMENT, ikke collection
+const roundRef = db.collection("sessions").doc(sessionId).collection("rounds").doc(roundId);
+const aggRef = roundRef.collection("agg").doc("live"); // ✅ riktig path
 
     await db.runTransaction(async (tx) => {
       const aggSnap = await tx.get(aggRef);
@@ -100,4 +100,5 @@ exports.onVoteCreated = functions.firestore
     });
 
     return null;
+
   });
