@@ -34,10 +34,20 @@
     let joinCode = null;
 
     let currentRoundId = null;
-    let currentMode = null;
+
+    // Cache av siste data for å kunne rendre konsistent
+    let lastState = null; // { status, mode, roundId, question }
+    let lastAgg = null;   // { mode, n, counts }
 
     function setMsg(html) {
       msgBox.innerHTML = html || "";
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
     }
 
     function safeJson(v) {
@@ -82,28 +92,97 @@
       resultBox.innerHTML = "";
     }
 
-    function renderWaitingForResults() {
-      resultBox.innerHTML = `<strong>Resultat</strong><br>Venter på <span class="mono">status="results"</span>.`;
+    function renderWaitingForRound() {
+      resultBox.innerHTML = `<strong>Resultat (MULTI)</strong><br>Venter på aktiv <span class="mono">roundId</span>…`;
     }
 
-    function renderWaitingForAgg() {
-      resultBox.innerHTML = `<strong>Resultat</strong><br>Venter på aggregert data (agg)…`;
+    function renderWrongMode(mode) {
+      resultBox.innerHTML = `
+        <strong>Display</strong><br>
+        Denne siden støtter kun <span class="mono">mode="multi"</span> i denne fasen.<br>
+        Nåværende mode: <span class="mono">${escapeHtml(mode || "-")}</span>
+      `;
     }
 
-    function renderMulti(agg) {
-      const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
-      const entries = Object.entries(counts).sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    function buildChoiceLabelMap(question) {
+      const map = {};
+      const q = question || {};
+      const choices = Array.isArray(q.choices) ? q.choices : [];
+      for (const c of choices) {
+        if (!c) continue;
+        const id = (c.id != null) ? String(c.id) : null;
+        const label = (c.label != null) ? String(c.label) : (id || "");
+        if (id) map[id] = label || id;
+      }
+      return map;
+    }
 
-      if (!entries.length) {
-        resultBox.innerHTML = `<strong>Resultat (MULTI)</strong><br>Ingen stemmer ennå.`;
+    function renderMultiFromStateAndAgg(state, agg) {
+      if (!state) {
+        clearResults();
         return;
       }
 
-      const rows = entries.map(([k, v]) => `<tr><td class="mono">${k}</td><td class="mono">${v}</td></tr>`).join("");
+      const status = state.status || null;
+      const mode = state.mode || null;
+      const roundId = state.roundId || null;
+
+      if (mode && mode !== "multi") {
+        renderWrongMode(mode);
+        return;
+      }
+
+      if (!roundId) {
+        renderWaitingForRound();
+        return;
+      }
+
+      // Agg kan være null i starten (før første stemme)
+      const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
+      const n = (agg && typeof agg.n === "number") ? agg.n : 0;
+
+      // Labeling basert på state.question (ingen summering, kun mapping)
+      const labelMap = buildChoiceLabelMap(state.question);
+
+      // Hvis state har choices, vis dem i den rekkefølgen (og vis 0 hvis ikke finnes i agg)
+      const qChoices = (state.question && Array.isArray(state.question.choices)) ? state.question.choices : [];
+      const haveChoiceList = qChoices.length >= 2;
+
+      let rows = "";
+
+      if (haveChoiceList) {
+        rows = qChoices.map((c, idx) => {
+          const id = (c && c.id != null) ? String(c.id) : ("choice_" + (idx + 1));
+          const label = (c && (c.label || c.text)) ? String(c.label || c.text) : (labelMap[id] || id);
+          const v = (typeof counts[id] === "number") ? counts[id] : 0;
+          return `<tr><td>${escapeHtml(label)}</td><td class="mono">${v}</td></tr>`;
+        }).join("");
+      } else {
+        // Fallback: vis kun det som finnes i agg (men fortsatt uten å "beregne" noe)
+        const entries = Object.entries(counts);
+        entries.sort((a, b) => (b[1] || 0) - (a[1] || 0));
+        if (!entries.length) {
+          rows = `<tr><td>(ingen)</td><td class="mono">0</td></tr>`;
+        } else {
+          rows = entries.map(([id, v]) => {
+            const label = labelMap[String(id)] || String(id);
+            return `<tr><td>${escapeHtml(label)}</td><td class="mono">${typeof v === "number" ? v : 0}</td></tr>`;
+          }).join("");
+        }
+      }
+
+      const statusLine = (status === "collect")
+        ? `Innsamling pågår (<span class="mono">collect</span>)`
+        : (status === "results")
+          ? `Resultater vises (<span class="mono">results</span>)`
+          : `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
 
       resultBox.innerHTML = `
         <strong>Resultat (MULTI)</strong><br>
-        n: <span class="mono">${agg.n ?? 0}</span><br>
+        ${statusLine}<br>
+        roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
+        n: <span class="mono">${n}</span><br>
+
         <table class="mt20">
           <thead><tr><th>Valg</th><th>Antall</th></tr></thead>
           <tbody>${rows}</tbody>
@@ -111,92 +190,30 @@
       `;
     }
 
-    function renderLikert(agg) {
-      const sum = typeof agg.sum === "number" ? agg.sum : 0;
-      const count = typeof agg.count === "number" ? agg.count : 0;
-      const avg = count > 0 ? (sum / count) : 0;
-
-      resultBox.innerHTML = `
-        <strong>Resultat (LIKERT)</strong><br>
-        n: <span class="mono">${agg.n ?? 0}</span><br>
-        sum: <span class="mono">${sum}</span><br>
-        count: <span class="mono">${count}</span><br>
-        snitt: <span class="mono">${avg.toFixed(2)}</span>
-      `;
+    function render() {
+      // Én renderer som alltid bruker siste state+agg
+      renderMultiFromStateAndAgg(lastState, lastAgg);
     }
 
-    function escapeHtml(s) {
-      return String(s)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;");
-    }
-
-    function renderOpen(agg) {
-      const texts = Array.isArray(agg.texts) ? agg.texts : [];
-      if (!texts.length) {
-        resultBox.innerHTML = `<strong>Resultat (OPEN)</strong><br>Ingen svar ennå.`;
-        return;
-      }
-
-      const items = texts
-        .slice(-200) // enkel beskyttelse i UI
-        .map(t => `<li>${escapeHtml(t)}</li>`)
-        .join("");
-
-      resultBox.innerHTML = `
-        <strong>Resultat (OPEN)</strong><br>
-        n: <span class="mono">${agg.n ?? texts.length}</span><br>
-        <ul class="mt20">${items}</ul>
-      `;
-    }
-
-    function renderWordcloud(agg) {
-      const freq = (agg && agg.freq && typeof agg.freq === "object") ? agg.freq : {};
-      const entries = Object.entries(freq).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, 50);
-
-      if (!entries.length) {
-        resultBox.innerHTML = `<strong>Resultat (WORDCLOUD)</strong><br>Ingen ord ennå.`;
-        return;
-      }
-
-      const rows = entries.map(([w, c]) => `<tr><td class="mono">${escapeHtml(w)}</td><td class="mono">${c}</td></tr>`).join("");
-
-      resultBox.innerHTML = `
-        <strong>Resultat (WORDCLOUD)</strong><br>
-        n: <span class="mono">${agg.n ?? 0}</span><br>
-        <table class="mt20">
-          <thead><tr><th>Ord</th><th>Antall</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      `;
-    }
-
-    function renderAgg(agg) {
-      if (!agg) {
-        renderWaitingForAgg();
-        return;
-      }
-
-      const mode = agg.mode || currentMode;
-
-      if (mode === "multi") return renderMulti(agg);
-      if (mode === "likert") return renderLikert(agg);
-      if (mode === "open") return renderOpen(agg);
-      if (mode === "wordcloud") return renderWordcloud(agg);
-
-      resultBox.innerHTML = `<strong>Resultat</strong><br>Ukjent mode i agg: <span class="mono">${escapeHtml(mode)}</span>`;
+    function detachAgg() {
+      if (unsubAgg) unsubAgg();
+      unsubAgg = null;
+      lastAgg = null;
     }
 
     function attachAgg(sessionId, roundId) {
-      if (unsubAgg) unsubAgg();
+      detachAgg();
+
       unsubAgg = App.listenAgg(
         sessionId,
         roundId,
-        (agg) => renderAgg(agg),
+        (agg) => {
+          lastAgg = agg;
+          render();
+        },
         (err) => {
           const m = err && err.message ? err.message : String(err);
-          setMsg("<strong>Kunne ikke lese agg:</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
+          setMsg("<strong>Kunne ikke lese agg/live:</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
         }
       );
     }
@@ -207,28 +224,35 @@
       unsubState = App.listenLiveState(
         sessionId,
         (state) => {
+          lastState = state;
           renderState(state);
 
+          setMsg("");
+
           if (!state) {
+            currentRoundId = null;
+            detachAgg();
             clearResults();
             return;
           }
 
-          const status = state.status || null;
-          const roundId = state.roundId || null;
           const mode = state.mode || null;
+          const roundId = state.roundId || null;
 
-          currentMode = mode;
-
-          if (status !== "results") {
-            if (unsubAgg) { unsubAgg(); unsubAgg = null; }
-            renderWaitingForResults();
+          // Kun multi i dette steget
+          if (mode && mode !== "multi") {
+            currentRoundId = roundId || null;
+            detachAgg();
+            lastAgg = null;
+            render(); // viser "kun multi"-beskjed
             return;
           }
 
+          // Håndter ny roundId (unsubscribe gammel + subscribe ny)
           if (!roundId) {
-            if (unsubAgg) { unsubAgg(); unsubAgg = null; }
-            renderWaitingForAgg();
+            currentRoundId = null;
+            detachAgg();
+            render();
             return;
           }
 
@@ -236,6 +260,9 @@
             currentRoundId = roundId;
             attachAgg(sessionId, roundId);
           }
+
+          // Hvis samme roundId: bare render (agg kommer via egen listener)
+          render();
         },
         (err) => {
           const m = err && err.message ? err.message : String(err);
@@ -263,12 +290,12 @@
 
       if (!sessionId) {
         setMsg("Mangler sessionId. Åpne display med <span class=\"mono\">?joinCode=ABC123</span> eller <span class=\"mono\">?sessionId=...</span>.");
-        renderWaitingForResults();
+        renderWaitingForRound();
         return;
       }
 
       attachState(sessionId);
-      renderWaitingForResults();
+      renderWaitingForRound();
     }
 
     boot();
