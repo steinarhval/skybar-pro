@@ -82,11 +82,11 @@
     },
 
     // agg doc ref
-    aggRef: function (sessionId, roundId) {
-      return db.collection("sessions").doc(sessionId)
-        .collection("rounds").doc(roundId)
-        .doc("agg");
-    },
+aggRef: function (sessionId, roundId) {
+  return db.collection("sessions").doc(sessionId)
+    .collection("rounds").doc(roundId)
+    .collection("agg").doc("live");
+},
 
     // ---- Join routing (READ ONLY) ----
     resolveJoinCode: async function (joinCode) {
@@ -302,4 +302,5 @@
   };
 
   if (auth) auth.onAuthStateChanged(() => {});
+
 })();
