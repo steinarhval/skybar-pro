@@ -48,7 +48,11 @@ service cloud.firestore {
 
         // Votes: participant create-only, never update/delete
         match /votes/{clientId} {
-          allow read: if false; // display skal ikke lese rå votes
+
+          // ✅ NYTT: Deltaker må kunne lese sin egen vote-doc for vote-lock.
+          // Tillat kun GET (enkelt-dokument), aldri LIST (liste alle votes).
+          allow get: if true;
+          allow list: if false;
 
           allow create: if
             // kun create (ikke update)
