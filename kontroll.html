@@ -178,6 +178,26 @@
       window.open(url, "_blank", "noopener");
     }
 
+    async function copyToClipboard(text) {
+      const t = String(text || "");
+      if (!t) throw new Error("Mangler joinCode å kopiere.");
+
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(t);
+        return;
+      }
+
+      // fallback
+      const ta = document.createElement("textarea");
+      ta.value = t;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+
     function renderSessionBox() {
       if (!activeSessionId) {
         sessionBox.innerHTML = "";
@@ -202,6 +222,7 @@
         <div class="btnRow">
           <button class="btn" id="openDisplayBtn" ${canOpen ? "" : "disabled"}>Åpne Display (joinCode)</button>
           <button class="btn" id="openCollectBtn" ${canOpen ? "" : "disabled"}>Åpne Innhenting (joinCode)</button>
+          <button class="btn" id="copyJoinCodeBtn" ${canOpen ? "" : "disabled"}>Kopier joincode</button>
         </div>
 
         <div class="mt20">
@@ -212,6 +233,7 @@
 
       const openDisplayBtn = document.getElementById("openDisplayBtn");
       const openCollectBtn = document.getElementById("openCollectBtn");
+      const copyJoinCodeBtn = document.getElementById("copyJoinCodeBtn");
 
       if (openDisplayBtn) {
         openDisplayBtn.addEventListener("click", () => {
@@ -224,9 +246,22 @@
       if (openCollectBtn) {
         openCollectBtn.addEventListener("click", () => {
           if (!activeJoinCode) return;
-          // innhenting.html støtter nå joinCode direkte (se oppdatert fil under)
           openInNewTab(buildUrl("innhenting.html", { joinCode: activeJoinCode }));
           setStatus("Åpnet innhenting i nytt vindu.", "ok");
+        });
+      }
+
+      if (copyJoinCodeBtn) {
+        copyJoinCodeBtn.addEventListener("click", async () => {
+          try {
+            await copyToClipboard(activeJoinCode);
+            setStatus("Joincode kopiert: " + activeJoinCode, "ok");
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            setError(msg);
+            setStatus("Kunne ikke kopiere joincode.", "err");
+            console.error(e);
+          }
         });
       }
     }
