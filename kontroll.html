@@ -17,6 +17,7 @@
 
   <div id="sessionBox" class="mt20"></div>
   <div id="leaseBox" class="mt20"></div>
+  <div id="statusBox" class="mt20"></div>
   <div id="errorBox" class="mt20"></div>
   <div id="userBox" class="mt20"></div>
 
@@ -34,6 +35,7 @@
     const startSessionBtn = document.getElementById("startSessionBtn");
     const sessionBox = document.getElementById("sessionBox");
     const leaseBox = document.getElementById("leaseBox");
+    const statusBox = document.getElementById("statusBox");
     const errorBox = document.getElementById("errorBox");
     const controlsBox = document.getElementById("controlsBox");
 
@@ -42,19 +44,55 @@
     let leaseTicker = null;
     let lastState = null;
 
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
     function setError(msg) {
       if (!msg) { errorBox.innerHTML = ""; return; }
-      errorBox.innerHTML = `<strong>Feil:</strong><br><span class="mono">${msg}</span>`;
+      errorBox.innerHTML = `<strong>Feil:</strong><br><span class="mono">${escapeHtml(msg)}</span>`;
+    }
+
+    // "Høflig nikk": liten statusmelding som ikke stopper flyt
+    let statusTimer = null;
+    function setStatus(msg, kind) {
+      // kind: "ok" | "info" | "warn" | "err" (kun tekst, ingen fancy styling)
+      if (statusTimer) clearTimeout(statusTimer);
+      if (!msg) { statusBox.innerHTML = ""; return; }
+
+      const label = kind === "err" ? "Status (feil)"
+                  : kind === "warn" ? "Status (obs)"
+                  : kind === "ok" ? "Status"
+                  : "Status";
+
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const ss = String(now.getSeconds()).padStart(2, "0");
+
+      statusBox.innerHTML = `
+        <strong>${label}:</strong>
+        <span class="mono">${hh}:${mm}:${ss}</span><br>
+        ${escapeHtml(msg)}
+      `;
+
+      // auto-skjul etter litt (ikke nødvendig å trykke OK)
+      statusTimer = setTimeout(() => {
+        statusBox.innerHTML = "";
+      }, 3500);
     }
 
     function renderUser(user) {
       if (!user) { userBox.innerHTML = ""; return; }
       userBox.innerHTML = `
         <strong>Innlogget som:</strong><br>
-        ${user.displayName || ""}<br>
-        ${user.email || ""}<br>
-        ownerId (user.uid): <span class="mono">${user.uid}</span><br>
-        clientId (localStorage): <span class="mono">${App.getClientId()}</span>
+        ${escapeHtml(user.displayName || "")}<br>
+        ${escapeHtml(user.email || "")}<br>
+        ownerId (user.uid): <span class="mono">${escapeHtml(user.uid)}</span><br>
+        clientId (localStorage): <span class="mono">${escapeHtml(App.getClientId())}</span>
       `;
     }
 
@@ -81,7 +119,7 @@
 
       return `
         <strong>Controller lease</strong><br>
-        controllerId: <span class="mono">${cid}</span><br>
+        controllerId: <span class="mono">${escapeHtml(cid)}</span><br>
         status: ${active ? "aktiv" : "utløpt/ikke satt"}<br>
         gjenstår: ${remaining === null ? "-" : (remaining + " sek")}<br>
         min controller: ${mine ? "ja" : "nei"}
@@ -90,13 +128,6 @@
 
     function renderLease(state) {
       leaseBox.innerHTML = formatLease(state);
-    }
-
-    function escapeHtml(s) {
-      return String(s)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;");
     }
 
     function parseChoices(text) {
@@ -119,7 +150,7 @@
 
         if (parts.length >= 2) {
           id = parts[0];
-          label = parts.slice(1).join(" | "); // hvis label inneholder |
+          label = parts.slice(1).join(" | ");
         } else {
           label = line;
           id = line;
@@ -198,27 +229,12 @@
       `;
 
       const modeSel = document.getElementById("modeSel");
-      const multiBox = document.getElementById("multiBox");
-
-      function updateModeUI() {
-        const m = modeSel.value;
-        multiBox.style.display = (m === "multi") ? "block" : "none"; // NB: inline style? Nei – dette er dynamisk. Grunnlov sier ingen dynamisk styling direkte i JS, kun class-toggling.
-      }
-
-      // Grunnlov: ingen dynamisk styling i JS -> vi gjør class-toggling i stedet:
-      function setHidden(el, hidden) {
-        if (!el) return;
-        el.classList.toggle("hidden", !!hidden);
-      }
-
-      // legg på hidden-klassen i CSS? Den finnes ikke – vi legger minimal i app.css? Nei. Da bryter vi “bare en fil”-kravet ikke, men du har ikke bedt om å endre css nå.
-      // Løsning uten css-endring: Vi dropper toggling og lar multiBox alltid stå, men brukeren ignorerer den for andre modes.
-      // => Gjør det enkelt og robust: alltid vis multiBox, men med liten forklaring. (Så slipper vi stylingkrangel.)
-      // Vi gjør derfor ikke updateModeUI().
 
       document.getElementById("setQuestionBtn").addEventListener("click", async () => {
         try {
           setError("");
+          setStatus("", "info");
+
           const m = modeSel.value;
           const text = (document.getElementById("qText").value || "").trim();
 
@@ -231,17 +247,20 @@
           }
 
           await App.setQuestionLease(activeSessionId, m, question);
-          alert("Spørsmål oppdatert (mode + question).");
+          setStatus("Spørsmål oppdatert (mode + question).", "ok");
         } catch (err) {
           const msg = (err && err.message) ? err.message : String(err);
           setError(msg);
-          alert("Set question feilet: " + msg);
+          setStatus("Set question feilet.", "err");
+          console.error(err);
         }
       });
 
       document.getElementById("startQuestionBtn").addEventListener("click", async () => {
         try {
           setError("");
+          setStatus("", "info");
+
           const m = modeSel.value;
           const text = (document.getElementById("qText").value || "").trim();
 
@@ -254,52 +273,61 @@
           }
 
           const res = await App.startQuestionLease(activeSessionId, m, question);
-          alert("Startet ny runde: " + res.roundId);
+          setStatus("Startet ny runde: " + res.roundId, "ok");
         } catch (err) {
           const msg = (err && err.message) ? err.message : String(err);
           setError(msg);
-          alert("Start feilet: " + msg);
+          setStatus("Start feilet.", "err");
+          console.error(err);
         }
       });
 
       document.getElementById("collectBtn").addEventListener("click", async () => {
         try {
           setError("");
+          setStatus("", "info");
           await App.setLiveStatusLease(activeSessionId, "collect");
+          setStatus("Status satt til collect.", "ok");
         } catch (err) {
           const msg = (err && err.message) ? err.message : String(err);
           setError(msg);
-          alert("Collect feilet: " + msg);
+          setStatus("Collect feilet.", "err");
+          console.error(err);
         }
       });
 
       document.getElementById("resultsBtn").addEventListener("click", async () => {
         try {
           setError("");
+          setStatus("", "info");
           await App.setLiveStatusLease(activeSessionId, "results");
+          setStatus("Status satt til results.", "ok");
         } catch (err) {
           const msg = (err && err.message) ? err.message : String(err);
           setError(msg);
-          alert("Results feilet: " + msg);
+          setStatus("Results feilet.", "err");
+          console.error(err);
         }
       });
 
       document.getElementById("resetBtn").addEventListener("click", async () => {
         try {
           setError("");
+          setStatus("", "info");
           const res = await App.resetRoundLease(activeSessionId);
-          alert("Ny roundId: " + res.roundId);
+          setStatus("Ny roundId: " + res.roundId, "ok");
         } catch (err) {
           const msg = (err && err.message) ? err.message : String(err);
           setError(msg);
-          alert("Reset feilet: " + msg);
+          setStatus("Reset feilet.", "err");
+          console.error(err);
         }
       });
 
       document.getElementById("endSessionBtn").addEventListener("click", async () => {
         try {
           setError("");
-          if (!confirm("Vil du avslutte sessionen?")) return;
+          setStatus("", "info");
 
           await App.endSession(activeSessionId);
 
@@ -311,11 +339,13 @@
           sessionBox.innerHTML = `<strong>Session avsluttet.</strong>`;
           controlsBox.innerHTML = "";
           renderLease(null);
-          alert("Session avsluttet.");
+
+          setStatus("Session avsluttet.", "ok");
         } catch (err) {
           const msg = (err && err.message) ? err.message : String(err);
           setError(msg);
-          alert("End session feilet: " + msg);
+          setStatus("End session feilet.", "err");
+          console.error(err);
         }
       });
     }
@@ -339,6 +369,7 @@
         },
         (err) => {
           setError("Kunne ikke lese state/live: " + (err && err.message ? err.message : String(err)));
+          setStatus("Kunne ikke lese state/live.", "err");
         }
       );
 
@@ -348,34 +379,40 @@
     loginBtn.addEventListener("click", async () => {
       try {
         setError("");
+        setStatus("", "info");
         const user = await App.ensureSignedInWithGoogle();
         renderUser(user);
+        setStatus("Innlogging ok.", "ok");
       } catch (err) {
         setError(err && err.message ? err.message : String(err));
-        alert("Innlogging feilet: " + (err && err.message ? err.message : "ukjent feil"));
+        setStatus("Innlogging feilet.", "err");
+        console.error(err);
       }
     });
 
     startSessionBtn.addEventListener("click", async () => {
       try {
         setError("");
+        setStatus("", "info");
         const res = await App.startOrReplaceSession({ saveResults: true, programId: null });
 
         activeSessionId = res.sessionId;
 
         sessionBox.innerHTML = `
           <strong>Session startet:</strong><br>
-          sessionId: <span class="mono">${res.sessionId}</span><br>
-          joinCode: <span class="mono">${res.joinCode}</span><br>
-          ownerId: <span class="mono">${res.ownerId}</span><br>
-          docPath: <span class="mono">sessions/${res.sessionId}</span>
+          sessionId: <span class="mono">${escapeHtml(res.sessionId)}</span><br>
+          joinCode: <span class="mono">${escapeHtml(res.joinCode)}</span><br>
+          ownerId: <span class="mono">${escapeHtml(res.ownerId)}</span><br>
+          docPath: <span class="mono">sessions/${escapeHtml(res.sessionId)}</span>
         `;
 
         attachStateListener(res.sessionId);
+        setStatus("Ny session startet.", "ok");
       } catch (err) {
         const msg = (err && err.message) ? err.message : String(err);
         setError(msg);
-        alert("Kunne ikke starte ny session: " + msg);
+        setStatus("Kunne ikke starte ny session.", "err");
+        console.error(err);
       }
     });
 
@@ -392,6 +429,7 @@
         leaseBox.innerHTML = "";
         sessionBox.innerHTML = "";
         controlsBox.innerHTML = "";
+        statusBox.innerHTML = "";
         setError("");
         return;
       }
@@ -404,17 +442,21 @@
           activeSessionId = info.activeSessionId;
           sessionBox.innerHTML = `
             <strong>Aktiv session (lest):</strong><br>
-            sessionId: <span class="mono">${info.activeSessionId}</span><br>
-            joinCode: <span class="mono">${info.activeJoinCode}</span><br>
-            docPath: <span class="mono">sessions/${info.activeSessionId}</span>
+            sessionId: <span class="mono">${escapeHtml(info.activeSessionId)}</span><br>
+            joinCode: <span class="mono">${escapeHtml(info.activeJoinCode)}</span><br>
+            docPath: <span class="mono">sessions/${escapeHtml(info.activeSessionId)}</span>
           `;
           attachStateListener(info.activeSessionId);
+          setStatus("Aktiv session lastet (ingen writes).", "ok");
         } else {
           leaseBox.innerHTML = `<strong>Controller lease</strong><br>Ingen aktiv session funnet på owner-peker.`;
           renderControls();
+          setStatus("Ingen aktiv session funnet.", "warn");
         }
       } catch (e) {
         setError(e && e.message ? e.message : String(e));
+        setStatus("Kunne ikke lese owner-peker.", "err");
+        console.error(e);
       }
     });
   </script>
