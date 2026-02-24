@@ -14,7 +14,6 @@
   <div id="stateBox" class="mt20"></div>
   <div id="voteBox" class="mt20"></div>
   <div id="msgBox" class="mt20"></div>
-  <div id="statusBox" class="mt20"></div>
 
   <div class="mt20">
     <button id="backBtn">Tilbake</button>
@@ -30,7 +29,6 @@
     const stateBox = document.getElementById("stateBox");
     const voteBox = document.getElementById("voteBox");
     const msgBox = document.getElementById("msgBox");
-    const statusBox = document.getElementById("statusBox");
     const backBtn = document.getElementById("backBtn");
 
     let unsubState = null;
@@ -46,43 +44,33 @@
     // lockState: "none" | "unknown" | "unlocked" | "locked"
     let lockState = "none";
 
-    // --- Status toast (ikke permanent banner) ---
-    let statusTimer = null;
-    function setStatus(msg) {
-      if (statusTimer) clearTimeout(statusTimer);
-      if (!msg) { statusBox.innerHTML = ""; return; }
-
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, "0");
-      const mm = String(now.getMinutes()).padStart(2, "0");
-      const ss = String(now.getSeconds()).padStart(2, "0");
-
-      statusBox.innerHTML = `<strong>Status</strong> <span class="mono">${hh}:${mm}:${ss}</span><br>${msg}`;
-      statusTimer = setTimeout(() => { statusBox.innerHTML = ""; }, 2500);
-    }
+    // boot guards / reconnect guards
+    let bootDone = false;
+    let reconnectTimer = null;
+    let lastReconnectAt = 0;
 
     function setMsg(html) {
       msgBox.innerHTML = html || "";
     }
 
-    function safeJson(v) {
-      try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-    }
-
-    function parseJoinFromUrl() {
-      const p = new URLSearchParams(window.location.search);
-      const jc = (p.get("joinCode") || "").trim().toUpperCase();
-      if (/^[A-Z0-9]{6}$/.test(jc)) return jc;
-      return null;
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
     }
 
     function renderInfo() {
       infoBox.innerHTML = `
         <strong>Tilkobling</strong><br>
-        sessionId: <span class="mono">${currentSessionId || "(mangler)"}</span><br>
-        joinCode: <span class="mono">${currentJoinCode || "(mangler)"}</span><br>
-        clientId: <span class="mono">${App.getClientId()}</span>
+        sessionId: <span class="mono">${escapeHtml(currentSessionId || "(mangler)")}</span><br>
+        joinCode: <span class="mono">${escapeHtml(currentJoinCode || "(mangler)")}</span><br>
+        clientId: <span class="mono">${escapeHtml(App.getClientId())}</span>
       `;
+    }
+
+    function safeJson(v) {
+      try { return JSON.stringify(v, null, 2); } catch { return String(v); }
     }
 
     function renderState(state) {
@@ -93,10 +81,10 @@
 
       stateBox.innerHTML = `
         <strong>State (live)</strong><br>
-        status: <span class="mono">${state.status ?? "-"}</span><br>
-        mode: <span class="mono">${state.mode ?? "-"}</span><br>
-        roundId: <span class="mono">${state.roundId ?? "-"}</span><br>
-        question: <pre class="pre">${safeJson(state.question)}</pre>
+        status: <span class="mono">${escapeHtml(state.status ?? "-")}</span><br>
+        mode: <span class="mono">${escapeHtml(state.mode ?? "-")}</span><br>
+        roundId: <span class="mono">${escapeHtml(state.roundId ?? "-")}</span><br>
+        question: <pre class="pre">${escapeHtml(safeJson(state.question))}</pre>
       `;
     }
 
@@ -116,7 +104,7 @@
       const buttons = choices.map((c, idx) => {
         const label = (c && (c.label || c.text)) ? (c.label || c.text) : ("Valg " + (idx + 1));
         const value = (c && c.id) ? c.id : label;
-        return `<button class="btn" data-v="${encodeURIComponent(String(value))}">${label}</button>`;
+        return `<button class="btn" data-v="${encodeURIComponent(String(value))}">${escapeHtml(label)}</button>`;
       }).join("");
 
       voteBox.innerHTML = `
@@ -220,9 +208,9 @@
         return;
       }
 
-      if (currentMode === "likert") return renderLikert();
-      if (currentMode === "open") return renderOpen();
-      if (currentMode === "wordcloud") return renderWordcloud();
+      if (currentMode === "likert") { renderLikert(); return; }
+      if (currentMode === "open") { renderOpen(); return; }
+      if (currentMode === "wordcloud") { renderWordcloud(); return; }
 
       setVoteUIWaiting();
     }
@@ -239,7 +227,6 @@
       setMsg("");
       try {
         const res = await App.submitVoteOnce(currentSessionId, currentRoundId, mode, value);
-
         lockState = "locked";
         renderVoteUI();
 
@@ -248,15 +235,15 @@
         }
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
-        setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + msg + "</span>");
+        setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
       }
     }
 
     function detachAllListeners() {
-      if (unsubLock) unsubLock();
       if (unsubState) unsubState();
-      unsubLock = null;
+      if (unsubLock) unsubLock();
       unsubState = null;
+      unsubLock = null;
     }
 
     function attachLock(sessionId, roundId) {
@@ -277,7 +264,8 @@
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
-          setMsg('<strong>Kunne ikke lese vote-lock:</strong><br><span class="mono">' + msg + "</span>");
+          setMsg('<strong>Kunne ikke lese vote-lock:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
+          // behold "unknown" så UI sier sannheten
           lockState = "unknown";
           renderVoteUI();
         }
@@ -299,6 +287,7 @@
 
           if (newRoundId !== currentRoundId) {
             currentRoundId = newRoundId;
+
             if (currentRoundId) attachLock(currentSessionId, currentRoundId);
             else {
               if (unsubLock) unsubLock();
@@ -312,72 +301,69 @@
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
-          setMsg('<strong>Kunne ikke lese state/live:</strong><br><span class="mono">' + msg + "</span>");
+          setMsg('<strong>Kunne ikke lese state/live:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
         }
       );
     }
 
-    // --- Robust reconnect: debounce + rate-limit ---
-    let reconnectTimer = null;
-    let lastReconnectAt = 0;
-
-    async function reconnect(reason) {
-      const now = Date.now();
-      if (now - lastReconnectAt < 2000) return; // rate limit
-      lastReconnectAt = now;
-
-      // Vi reconnecter kun hvis vi faktisk har en session å lytte på
-      if (!currentSessionId) return;
-
+    // --- Wake-up reconnect (uten pageshow-loop) ---
+    async function enableNetworkBestEffort() {
       try {
-        // Best effort. På noen mobiler gjør dette underverker etter dvale.
-        if (firebase && firebase.firestore) {
-          try { await firebase.firestore().enableNetwork(); } catch (_) {}
+        if (App && App.db && typeof App.db.enableNetwork === "function") {
+          await App.db.enableNetwork();
         }
-
-        detachAllListeners();
-        attachState(currentSessionId);
-
-        setStatus("Reconnected (" + reason + ").");
-      } catch (e) {
-        setStatus("Reconnect feilet (" + reason + ").");
-      }
+      } catch (_) {}
     }
 
     function scheduleReconnect(reason) {
+      if (!bootDone) return;
+      if (!currentSessionId) return;
+      if (document.hidden) return;
+
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(() => {
-        if (document.visibilityState === "visible") reconnect(reason);
-      }, 250);
+      reconnectTimer = setTimeout(async () => {
+        const now = Date.now();
+        if (now - lastReconnectAt < 2000) return; // rate limit
+        lastReconnectAt = now;
+
+        await enableNetworkBestEffort();
+
+        // Re-attach state (og lock hvis vi allerede har roundId)
+        if (unsubState) { unsubState(); unsubState = null; }
+        attachState(currentSessionId);
+
+        if (currentRoundId) {
+          attachLock(currentSessionId, currentRoundId);
+        }
+      }, 300);
     }
 
-    window.addEventListener("pageshow", (e) => {
-      // BFCache restore på Safari/iOS
-      scheduleReconnect("pageshow");
-    });
-
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") scheduleReconnect("visibility");
+      if (!document.hidden) scheduleReconnect("visibility");
     });
-
     window.addEventListener("focus", () => scheduleReconnect("focus"));
     window.addEventListener("online", () => scheduleReconnect("online"));
 
-    backBtn.addEventListener("click", () => {
-      window.location.href = "join.html";
-    });
+    // NB: vi bruker IKKE pageshow her – den lager trøbbel på noen mobiler.
+    // Hvis du absolutt trenger BFCache-håndtering senere, gjør vi det med persisted==true, ikke alltid.
 
-    // --- Boot: URL joinCode har prioritet over localStorage ---
-    (async function boot() {
+    function parseQueryJoinCode() {
+      const p = new URLSearchParams(window.location.search);
+      const jc = (p.get("joinCode") || "").trim().toUpperCase();
+      if (/^[A-Z0-9]{6}$/.test(jc)) return jc;
+      return null;
+    }
+
+    async function boot() {
       try {
-        const urlJoin = parseJoinFromUrl();
+        const urlJoin = parseQueryJoinCode();
 
         if (urlJoin) {
-          // Resolve joinCode -> sessionId -> lagre i localStorage
           const res = await App.resolveJoinCode(urlJoin);
           currentSessionId = res.sessionId;
-          currentJoinCode = res.joinCode;
+          currentJoinCode = urlJoin;
 
+          // viktig: overskriv localStorage så vi ikke “henger igjen” i gammel kode
           App.setParticipantSession(currentSessionId, currentJoinCode);
         } else {
           const p = App.getParticipantSession();
@@ -388,20 +374,33 @@
         }
 
         if (!currentSessionId || !currentJoinCode) {
+          renderInfo();
           setMsg('Mangler join-informasjon. Gå til <span class="mono">join.html</span> og skriv inn kode.');
           setVoteUIWaiting();
+          bootDone = true;
           return;
         }
 
         renderInfo();
         attachState(currentSessionId);
         setVoteUIWaiting();
+        setMsg("");
+
+        bootDone = true;
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
-        setMsg('<strong>Oppstart feilet:</strong><br><span class="mono">' + msg + "</span>");
+        renderInfo();
+        setMsg('<strong>Oppstart feilet:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
         setVoteUIWaiting();
+        bootDone = true;
       }
-    })();
+    }
+
+    backBtn.addEventListener("click", () => {
+      window.location.href = "join.html";
+    });
+
+    boot();
   </script>
 </body>
 </html>
