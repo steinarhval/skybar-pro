@@ -40,6 +40,8 @@
     const controlsBox = document.getElementById("controlsBox");
 
     let activeSessionId = null;
+    let activeJoinCode = null;
+
     let unsubscribe = null;
     let leaseTicker = null;
     let lastState = null;
@@ -56,10 +58,8 @@
       errorBox.innerHTML = `<strong>Feil:</strong><br><span class="mono">${escapeHtml(msg)}</span>`;
     }
 
-    // "Høflig nikk": liten statusmelding som ikke stopper flyt
     let statusTimer = null;
     function setStatus(msg, kind) {
-      // kind: "ok" | "info" | "warn" | "err" (kun tekst, ingen fancy styling)
       if (statusTimer) clearTimeout(statusTimer);
       if (!msg) { statusBox.innerHTML = ""; return; }
 
@@ -79,7 +79,6 @@
         ${escapeHtml(msg)}
       `;
 
-      // auto-skjul etter litt (ikke nødvendig å trykke OK)
       statusTimer = setTimeout(() => {
         statusBox.innerHTML = "";
       }, 3500);
@@ -131,8 +130,6 @@
     }
 
     function parseChoices(text) {
-      // Format per linje: id | label
-      // Tillater også "label" alene => id settes til label (trim)
       const lines = String(text || "")
         .split("\n")
         .map(x => x.trim())
@@ -165,6 +162,73 @@
 
       if (choices.length < 2) throw new Error("Multi krever minst 2 choices.");
       return choices;
+    }
+
+    function buildUrl(path, params) {
+      const u = new URL(path, window.location.href);
+      Object.entries(params || {}).forEach(([k, v]) => {
+        if (v == null || v === "") return;
+        u.searchParams.set(k, String(v));
+      });
+      return u.toString();
+    }
+
+    function openInNewTab(url) {
+      // noopener for sikkerhet – og for å slippe at popup får kontroll på window.opener
+      window.open(url, "_blank", "noopener");
+    }
+
+    function renderSessionBox() {
+      if (!activeSessionId) {
+        sessionBox.innerHTML = "";
+        return;
+      }
+
+      const displayUrl = (activeJoinCode)
+        ? buildUrl("display.html", { joinCode: activeJoinCode })
+        : null;
+
+      const collectUrl = (activeJoinCode)
+        ? buildUrl("innhenting.html", { joinCode: activeJoinCode })
+        : null;
+
+      const canOpen = !!activeJoinCode;
+
+      sessionBox.innerHTML = `
+        <strong>Aktiv session</strong><br>
+        sessionId: <span class="mono">${escapeHtml(activeSessionId || "-")}</span><br>
+        joinCode: <span class="mono">${escapeHtml(activeJoinCode || "-")}</span><br><br>
+
+        <div class="btnRow">
+          <button class="btn" id="openDisplayBtn" ${canOpen ? "" : "disabled"}>Åpne Display (joinCode)</button>
+          <button class="btn" id="openCollectBtn" ${canOpen ? "" : "disabled"}>Åpne Innhenting (joinCode)</button>
+        </div>
+
+        <div class="mt20">
+          Display-link: <span class="mono">${escapeHtml(displayUrl || "-")}</span><br>
+          Innhenting-link: <span class="mono">${escapeHtml(collectUrl || "-")}</span>
+        </div>
+      `;
+
+      const openDisplayBtn = document.getElementById("openDisplayBtn");
+      const openCollectBtn = document.getElementById("openCollectBtn");
+
+      if (openDisplayBtn) {
+        openDisplayBtn.addEventListener("click", () => {
+          if (!activeJoinCode) return;
+          openInNewTab(buildUrl("display.html", { joinCode: activeJoinCode }));
+          setStatus("Åpnet display i nytt vindu.", "ok");
+        });
+      }
+
+      if (openCollectBtn) {
+        openCollectBtn.addEventListener("click", () => {
+          if (!activeJoinCode) return;
+          // innhenting.html støtter nå joinCode direkte (se oppdatert fil under)
+          openInNewTab(buildUrl("innhenting.html", { joinCode: activeJoinCode }));
+          setStatus("Åpnet innhenting i nytt vindu.", "ok");
+        });
+      }
     }
 
     function renderControls() {
@@ -332,6 +396,7 @@
           await App.endSession(activeSessionId);
 
           activeSessionId = null;
+          activeJoinCode = null;
           lastState = null;
           if (unsubscribe) unsubscribe();
           unsubscribe = null;
@@ -397,15 +462,9 @@
         const res = await App.startOrReplaceSession({ saveResults: true, programId: null });
 
         activeSessionId = res.sessionId;
+        activeJoinCode = res.joinCode;
 
-        sessionBox.innerHTML = `
-          <strong>Session startet:</strong><br>
-          sessionId: <span class="mono">${escapeHtml(res.sessionId)}</span><br>
-          joinCode: <span class="mono">${escapeHtml(res.joinCode)}</span><br>
-          ownerId: <span class="mono">${escapeHtml(res.ownerId)}</span><br>
-          docPath: <span class="mono">sessions/${escapeHtml(res.sessionId)}</span>
-        `;
-
+        renderSessionBox();
         attachStateListener(res.sessionId);
         setStatus("Ny session startet.", "ok");
       } catch (err) {
@@ -421,6 +480,7 @@
 
       if (!user) {
         activeSessionId = null;
+        activeJoinCode = null;
         lastState = null;
         if (unsubscribe) unsubscribe();
         unsubscribe = null;
@@ -434,21 +494,20 @@
         return;
       }
 
-      // Ingen auto-writes ved refresh. Kun les og vis.
       try {
         setError("");
         const info = await App.getActiveSessionInfo(user.uid);
         if (info && info.activeSessionId) {
           activeSessionId = info.activeSessionId;
-          sessionBox.innerHTML = `
-            <strong>Aktiv session (lest):</strong><br>
-            sessionId: <span class="mono">${escapeHtml(info.activeSessionId)}</span><br>
-            joinCode: <span class="mono">${escapeHtml(info.activeJoinCode)}</span><br>
-            docPath: <span class="mono">sessions/${escapeHtml(info.activeSessionId)}</span>
-          `;
+          activeJoinCode = info.activeJoinCode;
+
+          renderSessionBox();
           attachStateListener(info.activeSessionId);
           setStatus("Aktiv session lastet (ingen writes).", "ok");
         } else {
+          activeSessionId = null;
+          activeJoinCode = null;
+          renderSessionBox();
           leaseBox.innerHTML = `<strong>Controller lease</strong><br>Ingen aktiv session funnet på owner-peker.`;
           renderControls();
           setStatus("Ingen aktiv session funnet.", "warn");
