@@ -48,12 +48,19 @@
       msgBox.innerHTML = html || "";
     }
 
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
     function renderInfo() {
       infoBox.innerHTML = `
         <strong>Tilkobling</strong><br>
-        sessionId: <span class="mono">${currentSessionId || "(mangler)"}</span><br>
-        joinCode: <span class="mono">${currentJoinCode || "(mangler)"}</span><br>
-        clientId: <span class="mono">${App.getClientId()}</span>
+        sessionId: <span class="mono">${escapeHtml(currentSessionId || "(mangler)")}</span><br>
+        joinCode: <span class="mono">${escapeHtml(currentJoinCode || "(mangler)")}</span><br>
+        clientId: <span class="mono">${escapeHtml(App.getClientId())}</span>
       `;
     }
 
@@ -69,10 +76,10 @@
 
       stateBox.innerHTML = `
         <strong>State (live)</strong><br>
-        status: <span class="mono">${state.status ?? "-"}</span><br>
-        mode: <span class="mono">${state.mode ?? "-"}</span><br>
-        roundId: <span class="mono">${state.roundId ?? "-"}</span><br>
-        question: <pre class="pre">${safeJson(state.question)}</pre>
+        status: <span class="mono">${escapeHtml(state.status ?? "-")}</span><br>
+        mode: <span class="mono">${escapeHtml(state.mode ?? "-")}</span><br>
+        roundId: <span class="mono">${escapeHtml(state.roundId ?? "-")}</span><br>
+        question: <pre class="pre">${escapeHtml(safeJson(state.question))}</pre>
       `;
     }
 
@@ -92,7 +99,7 @@
       const buttons = choices.map((c, idx) => {
         const label = (c && (c.label || c.text)) ? (c.label || c.text) : ("Valg " + (idx + 1));
         const value = (c && c.id) ? c.id : label;
-        return `<button class="btn" data-v="${encodeURIComponent(String(value))}">${label}</button>`;
+        return `<button class="btn" data-v="${encodeURIComponent(String(value))}">${escapeHtml(label)}</button>`;
       }).join("");
 
       voteBox.innerHTML = `
@@ -169,14 +176,12 @@
     }
 
     function renderVoteUI() {
-      // Ingen runde -> venter
       if (!currentRoundId || !currentMode) {
         lockState = currentRoundId ? lockState : "none";
         setVoteUIWaiting();
         return;
       }
 
-      // Før vi vet lock -> ikke vis inputs/knapper
       if (lockState === "unknown") {
         setVoteUICheckingLock();
         return;
@@ -187,7 +192,6 @@
         return;
       }
 
-      // unlocked -> render etter mode
       if (currentMode === "multi") {
         const q = currentQuestion || {};
         const choices = Array.isArray(q.choices) ? q.choices : null;
@@ -199,22 +203,10 @@
         return;
       }
 
-      if (currentMode === "likert") {
-        renderLikert();
-        return;
-      }
+      if (currentMode === "likert") { renderLikert(); return; }
+      if (currentMode === "open") { renderOpen(); return; }
+      if (currentMode === "wordcloud") { renderWordcloud(); return; }
 
-      if (currentMode === "open") {
-        renderOpen();
-        return;
-      }
-
-      if (currentMode === "wordcloud") {
-        renderWordcloud();
-        return;
-      }
-
-      // Skal ikke skje pga grunnlov, men vi viser en trygg fallback
       setVoteUIWaiting();
     }
 
@@ -241,7 +233,7 @@
         }
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
-        setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + msg + "</span>");
+        setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
       }
     }
 
@@ -263,7 +255,7 @@
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
-          setMsg('<strong>Kunne ikke lese vote-lock:</strong><br><span class="mono">' + msg + "</span>");
+          setMsg('<strong>Kunne ikke lese vote-lock:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
           lockState = "unknown";
           renderVoteUI();
         }
@@ -298,25 +290,81 @@
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
-          setMsg('<strong>Kunne ikke lese state/live:</strong><br><span class="mono">' + msg + "</span>");
+          setMsg('<strong>Kunne ikke lese state/live:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
         }
       );
+    }
+
+    function detachAll() {
+      if (unsubState) unsubState();
+      if (unsubLock) unsubLock();
+      unsubState = null;
+      unsubLock = null;
+      currentRoundId = null;
+      currentMode = null;
+      currentQuestion = null;
+      lockState = "none";
+    }
+
+    function parseQueryJoinCode() {
+      const p = new URLSearchParams(window.location.search);
+      const jc = p.get("joinCode");
+      return jc && jc.trim() ? jc.trim().toUpperCase() : null;
+    }
+
+    async function boot() {
+      const queryJoin = parseQueryJoinCode();
+
+      // 1) Hvis vi har joinCode i URL: bruk den og OVERSTYR localStorage
+      if (queryJoin) {
+        setMsg('<span class="mono">Kobler til via joinCode…</span>');
+        detachAll();
+
+        try {
+          const res = await App.resolveJoinCode(queryJoin);
+          currentSessionId = res.sessionId;
+          currentJoinCode = queryJoin;
+
+          // viktig: skriv dette til localStorage så siden ikke "henger igjen" i gammel joinCode
+          App.setParticipantSession(currentSessionId, currentJoinCode);
+
+          setMsg("");
+          renderInfo();
+          attachState(currentSessionId);
+          return;
+        } catch (e) {
+          const m = e && e.message ? e.message : String(e);
+          currentSessionId = null;
+          currentJoinCode = queryJoin;
+          renderInfo();
+          setVoteUIWaiting();
+          setMsg('<strong>Kunne ikke koble til joinCode:</strong><br><span class="mono">' + escapeHtml(m) + "</span>");
+          return;
+        }
+      }
+
+      // 2) Ellers: gammel oppførsel (localStorage)
+      const p = App.getParticipantSession();
+      if (!p || !p.sessionId || !p.joinCode) {
+        currentSessionId = null;
+        currentJoinCode = null;
+        renderInfo();
+        setMsg('Mangler join-informasjon. Gå til <span class="mono">join.html</span> og skriv inn kode.');
+        setVoteUIWaiting();
+        return;
+      }
+
+      currentSessionId = p.sessionId;
+      currentJoinCode = p.joinCode;
+      renderInfo();
+      attachState(currentSessionId);
     }
 
     backBtn.addEventListener("click", () => {
       window.location.href = "join.html";
     });
 
-    const p = App.getParticipantSession();
-    if (!p || !p.sessionId || !p.joinCode) {
-      setMsg('Mangler join-informasjon. Gå til <span class="mono">join.html</span> og skriv inn kode.');
-      setVoteUIWaiting();
-    } else {
-      currentSessionId = p.sessionId;
-      currentJoinCode = p.joinCode;
-      renderInfo();
-      attachState(currentSessionId);
-    }
+    boot();
   </script>
 </body>
 </html>
