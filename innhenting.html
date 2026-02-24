@@ -49,6 +49,9 @@
     let reconnectTimer = null;
     let lastReconnectAt = 0;
 
+    // IMPORTANT: ikke reconnect/roter mens vi sender vote
+    let isSubmitting = false;
+
     function setMsg(html) {
       msgBox.innerHTML = html || "";
     }
@@ -224,9 +227,17 @@
         return;
       }
 
+      if (isSubmitting) return;
+      isSubmitting = true;
+
+      async function trySendOnce() {
+        return App.submitVoteOnce(currentSessionId, currentRoundId, mode, value);
+      }
+
       setMsg("");
       try {
-        const res = await App.submitVoteOnce(currentSessionId, currentRoundId, mode, value);
+        const res = await trySendOnce();
+
         lockState = "locked";
         renderVoteUI();
 
@@ -234,8 +245,48 @@
           setMsg('<span class="mono">Takk! Stemmen er sendt.</span>');
         }
       } catch (e) {
-        const msg = e && e.message ? e.message : String(e);
-        setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
+        const msg = (e && e.message) ? String(e.message) : String(e);
+
+        const looksLikeWeirdState =
+          msg.includes("INTERNAL ASSERTION FAILED") ||
+          msg.includes("Unexpected state") ||
+          msg.includes("Unexpeced state");
+
+        if (looksLikeWeirdState) {
+          try {
+            setMsg('<span class="mono">Tilkobling våknet litt skeivt – prøver igjen…</span>');
+
+            // Best effort: bounce nettverk
+            if (App && App.db && typeof App.db.disableNetwork === "function") {
+              try { await App.db.disableNetwork(); } catch (_) {}
+            }
+            if (App && App.db && typeof App.db.enableNetwork === "function") {
+              try { await App.db.enableNetwork(); } catch (_) {}
+            }
+
+            await new Promise(r => setTimeout(r, 250));
+
+            const res2 = await trySendOnce();
+
+            lockState = "locked";
+            renderVoteUI();
+
+            if (!(res2 && res2.already)) {
+              setMsg('<span class="mono">Takk! Stemmen er sendt.</span>');
+            } else {
+              setMsg("");
+            }
+
+            return;
+          } catch (e2) {
+            const msg2 = (e2 && e2.message) ? String(e2.message) : String(e2);
+            setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + escapeHtml(msg2) + "</span>");
+          }
+        } else {
+          setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
+        }
+      } finally {
+        isSubmitting = false;
       }
     }
 
@@ -265,7 +316,6 @@
         (err) => {
           const msg = err && err.message ? err.message : String(err);
           setMsg('<strong>Kunne ikke lese vote-lock:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
-          // behold "unknown" så UI sier sannheten
           lockState = "unknown";
           renderVoteUI();
         }
@@ -319,6 +369,7 @@
       if (!bootDone) return;
       if (!currentSessionId) return;
       if (document.hidden) return;
+      if (isSubmitting) return; // viktig: ikke reconnect midt i vote
 
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(async () => {
@@ -344,9 +395,6 @@
     window.addEventListener("focus", () => scheduleReconnect("focus"));
     window.addEventListener("online", () => scheduleReconnect("online"));
 
-    // NB: vi bruker IKKE pageshow her – den lager trøbbel på noen mobiler.
-    // Hvis du absolutt trenger BFCache-håndtering senere, gjør vi det med persisted==true, ikke alltid.
-
     function parseQueryJoinCode() {
       const p = new URLSearchParams(window.location.search);
       const jc = (p.get("joinCode") || "").trim().toUpperCase();
@@ -363,7 +411,6 @@
           currentSessionId = res.sessionId;
           currentJoinCode = urlJoin;
 
-          // viktig: overskriv localStorage så vi ikke “henger igjen” i gammel kode
           App.setParticipantSession(currentSessionId, currentJoinCode);
         } else {
           const p = App.getParticipantSession();
