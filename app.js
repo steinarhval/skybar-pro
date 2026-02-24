@@ -15,7 +15,7 @@
   const LEASE_TTL_MS = 60 * 1000;
 
   const ALLOWED_MODES = new Set(["multi", "likert", "open", "wordcloud"]);
-  const ALLOWED_STATUSES = new Set(["idle", "collect", "results"]);
+  const ALLOWED_STATUSES = new Set(["idle", "collect", "results", "paused"]); // Grunnlov
 
   function getOrCreateClientId() {
     let id = localStorage.getItem(CLIENT_ID_KEY);
@@ -53,12 +53,50 @@
 
   function assertAllowedStatus(status) {
     if (!ALLOWED_STATUSES.has(status)) {
-      throw new Error('Ugyldig status. Tillatt: "idle", "collect", "results".');
+      throw new Error('Ugyldig status. Tillatt: "idle", "collect", "results", "paused".');
     }
   }
 
   function makeRoundId() {
     return "r_" + Date.now().toString(36);
+  }
+
+  function nowMs() { return Date.now(); }
+
+  function toMillisMaybe(ts) {
+    if (!ts) return null;
+    if (typeof ts.toMillis === "function") return ts.toMillis();
+    if (typeof ts.seconds === "number") return (ts.seconds * 1000) + Math.floor((ts.nanoseconds || 0) / 1e6);
+    return null;
+  }
+
+  function isPlainObject(v) {
+    return v && typeof v === "object" && !Array.isArray(v);
+  }
+
+  function normalizeQuestionForMode(mode, question) {
+    // State skal ikke inneholde svar, kun styring. Vi lagrer bare det deltaker/visning trenger.
+    // Innhenting bruker question.choices for multi; ellers er question kun metadata.
+    if (!question) return null;
+
+    if (mode === "multi") {
+      const choices = Array.isArray(question.choices) ? question.choices : null;
+      if (!choices || choices.length < 2) throw new Error("Multi krever minst 2 choices.");
+      const norm = choices.map((c, idx) => {
+        const id = (c && c.id != null) ? String(c.id).trim() : "";
+        const label = (c && c.label != null) ? String(c.label).trim() : "";
+        if (!id) throw new Error("Multi choice mangler id (rad " + (idx + 1) + ").");
+        if (!label) throw new Error("Multi choice mangler label (rad " + (idx + 1) + ").");
+        return { id, label };
+      });
+      return { choices: norm, text: question.text != null ? String(question.text) : null };
+    }
+
+    // likert/open/wordcloud: behold kun text + evt. fremtidige felt (men stramt)
+    if (!isPlainObject(question)) throw new Error("question må være et objekt.");
+    const out = {};
+    if (question.text != null) out.text = String(question.text);
+    return Object.keys(out).length ? out : null;
   }
 
   window.App = {
@@ -82,11 +120,11 @@
     },
 
     // agg doc ref
-aggRef: function (sessionId, roundId) {
-  return db.collection("sessions").doc(sessionId)
-    .collection("rounds").doc(roundId)
-    .collection("agg").doc("live");
-},
+    aggRef: function (sessionId, roundId) {
+      return db.collection("sessions").doc(sessionId)
+        .collection("rounds").doc(roundId)
+        .collection("agg").doc("live");
+    },
 
     // ---- Join routing (READ ONLY) ----
     resolveJoinCode: async function (joinCode) {
@@ -268,39 +306,117 @@ aggRef: function (sessionId, roundId) {
       return { ownerId, sessionId, joinCode };
     },
 
-    // ---- Controller: state writes (Steg 5 helper) ----
-    startMultiYesNo: async function (sessionId) {
+    // ---------- Lease-guarded state write ----------
+    writeLiveStateWithLease: async function (sessionId, patch) {
       if (!sessionId) throw new Error("Mangler sessionId.");
-      const roundId = makeRoundId();
+      if (!patch || typeof patch !== "object") throw new Error("Mangler patch.");
 
+      const myControllerId = getOrCreateClientId();
       const ref = this.liveStateRef(sessionId);
 
-      // Ingen svar i state. Kun kontrollfelt for aktiv runde.
-      await ref.set({
-        status: "collect",
-        mode: "multi",
-        roundId,
-        question: {
-          choices: [
-            { id: "yes", label: "ja" },
-            { id: "no", label: "nei" }
-          ]
-        }
-      }, { merge: true });
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) throw new Error("state/live finnes ikke.");
 
+        const cur = snap.data() || {};
+        const curCid = cur.controllerId || null;
+        const untilMs = toMillisMaybe(cur.controllerLeaseUntil);
+        const active = (untilMs !== null) ? (untilMs > nowMs()) : false;
+
+        // Ingen takeover i Steg 6
+        if (active && curCid && curCid !== myControllerId) {
+          throw new Error("Lease aktiv hos annen controller. Kan ikke skrive nå.");
+        }
+
+        tx.set(ref, Object.assign({}, patch, {
+          controllerId: myControllerId,
+          controllerTs: firebase.firestore.FieldValue.serverTimestamp(),
+          controllerLeaseUntil: leaseUntilTimestampFromNow()
+        }), { merge: true });
+      });
+    },
+
+    // ---- Controller actions (Steg 6) ----
+    setLiveStatusLease: async function (sessionId, status) {
+      assertAllowedStatus(status);
+      await this.writeLiveStateWithLease(sessionId, { status });
+      return { status };
+    },
+
+    resetRoundLease: async function (sessionId) {
+      const roundId = makeRoundId();
+      await this.writeLiveStateWithLease(sessionId, { roundId, status: "collect" });
       return { roundId };
     },
 
-    setLiveStatus: async function (sessionId, status) {
-      if (!sessionId) throw new Error("Mangler sessionId.");
-      assertAllowedStatus(status);
+    setQuestionLease: async function (sessionId, mode, question) {
+      assertAllowedMode(mode);
+      const q = normalizeQuestionForMode(mode, question);
+      // Setter question/mode, men rører ikke roundId (ingen reset).
+      await this.writeLiveStateWithLease(sessionId, { mode, question: q });
+      return { mode };
+    },
 
-      const ref = this.liveStateRef(sessionId);
-      await ref.set({ status }, { merge: true });
-      return { status };
+    startQuestionLease: async function (sessionId, mode, question) {
+      assertAllowedMode(mode);
+      const q = normalizeQuestionForMode(mode, question);
+      const roundId = makeRoundId();
+      await this.writeLiveStateWithLease(sessionId, {
+        mode,
+        question: q,
+        roundId,
+        status: "collect"
+      });
+      return { roundId };
+    },
+
+    // Fortsatt tilgjengelig (nå via startQuestionLease i UI, men greit å beholde)
+    startMultiYesNo: async function (sessionId) {
+      return await this.startQuestionLease(sessionId, "multi", {
+        choices: [
+          { id: "yes", label: "ja" },
+          { id: "no", label: "nei" }
+        ]
+      });
+    },
+
+    endSession: async function (sessionId) {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      const user = this.auth.currentUser;
+      if (!user) throw new Error("Ikke innlogget.");
+      if (!sessionId) throw new Error("Mangler sessionId.");
+
+      const ownerId = user.uid;
+      const sessionRef = this.sessionRef(sessionId);
+
+      const sSnap = await sessionRef.get();
+      if (!sSnap.exists) throw new Error("Session finnes ikke.");
+      const sData = sSnap.data() || {};
+      const joinCode = sData.joinCode || null;
+
+      const batch = db.batch();
+
+      batch.set(sessionRef, {
+        status: "ended",
+        endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      if (joinCode) {
+        batch.set(this.joinCodeRef(String(joinCode).toUpperCase()), { active: false }, { merge: true });
+      }
+
+      batch.set(this.ownerRef(ownerId), {
+        activeSessionId: null,
+        activeJoinCode: null,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      await batch.commit();
+      return { ok: true };
     }
   };
 
-  if (auth) auth.onAuthStateChanged(() => {});
+  if (auth) auth.onAuthStateChanged(() => { });
 
 })();

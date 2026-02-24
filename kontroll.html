@@ -13,7 +13,6 @@
   <button id="loginBtn">Logg inn med Google</button>
   <button id="startSessionBtn">Start ny session</button>
 
-  <!-- NY: minimal controller controls -->
   <div id="controlsBox" class="mt20"></div>
 
   <div id="sessionBox" class="mt20"></div>
@@ -44,18 +43,12 @@
     let lastState = null;
 
     function setError(msg) {
-      if (!msg) {
-        errorBox.innerHTML = "";
-        return;
-      }
+      if (!msg) { errorBox.innerHTML = ""; return; }
       errorBox.innerHTML = `<strong>Feil:</strong><br><span class="mono">${msg}</span>`;
     }
 
     function renderUser(user) {
-      if (!user) {
-        userBox.innerHTML = "";
-        return;
-      }
+      if (!user) { userBox.innerHTML = ""; return; }
       userBox.innerHTML = `
         <strong>Innlogget som:</strong><br>
         ${user.displayName || ""}<br>
@@ -99,54 +92,230 @@
       leaseBox.innerHTML = formatLease(state);
     }
 
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function parseChoices(text) {
+      // Format per linje: id | label
+      // Tillater også "label" alene => id settes til label (trim)
+      const lines = String(text || "")
+        .split("\n")
+        .map(x => x.trim())
+        .filter(Boolean);
+
+      const choices = [];
+      const seen = new Set();
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const parts = line.split("|").map(x => x.trim()).filter(Boolean);
+
+        let id = "";
+        let label = "";
+
+        if (parts.length >= 2) {
+          id = parts[0];
+          label = parts.slice(1).join(" | "); // hvis label inneholder |
+        } else {
+          label = line;
+          id = line;
+        }
+
+        if (!id || !label) throw new Error("Ugyldig choice på linje " + (i + 1) + ".");
+        if (seen.has(id)) throw new Error("Duplisert choice-id: " + id);
+        seen.add(id);
+
+        choices.push({ id, label });
+      }
+
+      if (choices.length < 2) throw new Error("Multi krever minst 2 choices.");
+      return choices;
+    }
+
     function renderControls() {
       if (!activeSessionId) {
-        controlsBox.innerHTML = `<strong>State quick controls</strong><br>Start/velg en aktiv session først.`;
+        controlsBox.innerHTML = `<strong>Controller UI</strong><br>Start/velg en aktiv session først.`;
         return;
       }
 
       const status = lastState && lastState.status ? lastState.status : "(ukjent)";
       const roundId = lastState && lastState.roundId ? lastState.roundId : "-";
-      const mode = lastState && lastState.mode ? lastState.mode : "-";
+      const mode = lastState && lastState.mode ? lastState.mode : "";
 
-      const canToggle = (status === "collect" || status === "results");
-      const toggleLabel = (status === "results") ? "Tilbake til collect" : "Vis resultater";
+      const q = lastState && lastState.question ? lastState.question : null;
+      const qText = q && q.text ? String(q.text) : "";
+
+      const multiChoices = (mode === "multi" && q && Array.isArray(q.choices))
+        ? q.choices.map(c => `${c.id} | ${c.label}`).join("\n")
+        : "yes | ja\nno | nei";
 
       controlsBox.innerHTML = `
-        <strong>State quick controls</strong><br>
-        status: <span class="mono">${status}</span> |
-        mode: <span class="mono">${mode}</span> |
-        roundId: <span class="mono">${roundId}</span><br><br>
-        <button id="startYesNoBtn">Start Ja/Nei (collect)</button>
-        <button id="toggleResultsBtn" ${canToggle ? "" : "disabled"}>${toggleLabel}</button>
+        <strong>Controller UI (Steg 6)</strong><br>
+        status: <span class="mono">${escapeHtml(status)}</span> |
+        mode: <span class="mono">${escapeHtml(mode || "-")}</span> |
+        roundId: <span class="mono">${escapeHtml(roundId)}</span><br><br>
+
+        <strong>Spørsmål</strong><br>
+        <label>
+          Mode:
+          <select id="modeSel" class="inputWide">
+            <option value="multi" ${mode === "multi" ? "selected" : ""}>multi</option>
+            <option value="likert" ${mode === "likert" ? "selected" : ""}>likert</option>
+            <option value="open" ${mode === "open" ? "selected" : ""}>open</option>
+            <option value="wordcloud" ${mode === "wordcloud" ? "selected" : ""}>wordcloud</option>
+          </select>
+        </label>
+
+        <div class="mt20">
+          <label>Spørsmålstekst (valgfri, men anbefalt):</label><br>
+          <textarea id="qText" class="inputArea" rows="2" placeholder="Skriv spørsmålet her...">${escapeHtml(qText)}</textarea>
+        </div>
+
+        <div class="mt20" id="multiBox">
+          <label>Multi choices (én per linje): <span class="mono">id | label</span></label><br>
+          <textarea id="multiChoices" class="inputArea" rows="5">${escapeHtml(multiChoices)}</textarea>
+        </div>
+
+        <div class="mt20 btnRow">
+          <button class="btn" id="setQuestionBtn">Set question (mode + question)</button>
+          <button class="btn" id="startQuestionBtn">Start (set + reset + collect)</button>
+        </div>
+
+        <div class="mt20 btnRow">
+          <button class="btn" id="collectBtn">Collect</button>
+          <button class="btn" id="resultsBtn">Results</button>
+          <button class="btn" id="resetBtn">Reset (ny roundId)</button>
+          <button class="btn" id="endSessionBtn">End session</button>
+        </div>
+
+        <div class="mt20">
+          Tips: Normal flyt er <span class="mono">Set question</span> → <span class="mono">Start</span> → (Collect/Results) → <span class="mono">Reset</span> for neste runde.
+        </div>
       `;
 
-      document.getElementById("startYesNoBtn").addEventListener("click", async () => {
+      const modeSel = document.getElementById("modeSel");
+      const multiBox = document.getElementById("multiBox");
+
+      function updateModeUI() {
+        const m = modeSel.value;
+        multiBox.style.display = (m === "multi") ? "block" : "none"; // NB: inline style? Nei – dette er dynamisk. Grunnlov sier ingen dynamisk styling direkte i JS, kun class-toggling.
+      }
+
+      // Grunnlov: ingen dynamisk styling i JS -> vi gjør class-toggling i stedet:
+      function setHidden(el, hidden) {
+        if (!el) return;
+        el.classList.toggle("hidden", !!hidden);
+      }
+
+      // legg på hidden-klassen i CSS? Den finnes ikke – vi legger minimal i app.css? Nei. Da bryter vi “bare en fil”-kravet ikke, men du har ikke bedt om å endre css nå.
+      // Løsning uten css-endring: Vi dropper toggling og lar multiBox alltid stå, men brukeren ignorerer den for andre modes.
+      // => Gjør det enkelt og robust: alltid vis multiBox, men med liten forklaring. (Så slipper vi stylingkrangel.)
+      // Vi gjør derfor ikke updateModeUI().
+
+      document.getElementById("setQuestionBtn").addEventListener("click", async () => {
         try {
           setError("");
-          const res = await App.startMultiYesNo(activeSessionId);
-          // Ingen auto-write ellers – men dette var et eksplisitt klikk.
-          // Listener vil oppdatere lastState når Firestore endrer seg.
-          alert("Ny runde startet: " + res.roundId);
+          const m = modeSel.value;
+          const text = (document.getElementById("qText").value || "").trim();
+
+          let question = {};
+          if (text) question.text = text;
+
+          if (m === "multi") {
+            const rawChoices = document.getElementById("multiChoices").value;
+            question.choices = parseChoices(rawChoices);
+          }
+
+          await App.setQuestionLease(activeSessionId, m, question);
+          alert("Spørsmål oppdatert (mode + question).");
         } catch (err) {
-          console.error(err);
           const msg = (err && err.message) ? err.message : String(err);
           setError(msg);
-          alert("Kunne ikke starte Ja/Nei: " + msg);
+          alert("Set question feilet: " + msg);
         }
       });
 
-      document.getElementById("toggleResultsBtn").addEventListener("click", async () => {
+      document.getElementById("startQuestionBtn").addEventListener("click", async () => {
         try {
           setError("");
-          const cur = lastState && lastState.status ? lastState.status : null;
-          const next = (cur === "results") ? "collect" : "results";
-          await App.setLiveStatus(activeSessionId, next);
+          const m = modeSel.value;
+          const text = (document.getElementById("qText").value || "").trim();
+
+          let question = {};
+          if (text) question.text = text;
+
+          if (m === "multi") {
+            const rawChoices = document.getElementById("multiChoices").value;
+            question.choices = parseChoices(rawChoices);
+          }
+
+          const res = await App.startQuestionLease(activeSessionId, m, question);
+          alert("Startet ny runde: " + res.roundId);
         } catch (err) {
-          console.error(err);
           const msg = (err && err.message) ? err.message : String(err);
           setError(msg);
-          alert("Kunne ikke endre status: " + msg);
+          alert("Start feilet: " + msg);
+        }
+      });
+
+      document.getElementById("collectBtn").addEventListener("click", async () => {
+        try {
+          setError("");
+          await App.setLiveStatusLease(activeSessionId, "collect");
+        } catch (err) {
+          const msg = (err && err.message) ? err.message : String(err);
+          setError(msg);
+          alert("Collect feilet: " + msg);
+        }
+      });
+
+      document.getElementById("resultsBtn").addEventListener("click", async () => {
+        try {
+          setError("");
+          await App.setLiveStatusLease(activeSessionId, "results");
+        } catch (err) {
+          const msg = (err && err.message) ? err.message : String(err);
+          setError(msg);
+          alert("Results feilet: " + msg);
+        }
+      });
+
+      document.getElementById("resetBtn").addEventListener("click", async () => {
+        try {
+          setError("");
+          const res = await App.resetRoundLease(activeSessionId);
+          alert("Ny roundId: " + res.roundId);
+        } catch (err) {
+          const msg = (err && err.message) ? err.message : String(err);
+          setError(msg);
+          alert("Reset feilet: " + msg);
+        }
+      });
+
+      document.getElementById("endSessionBtn").addEventListener("click", async () => {
+        try {
+          setError("");
+          if (!confirm("Vil du avslutte sessionen?")) return;
+
+          await App.endSession(activeSessionId);
+
+          activeSessionId = null;
+          lastState = null;
+          if (unsubscribe) unsubscribe();
+          unsubscribe = null;
+
+          sessionBox.innerHTML = `<strong>Session avsluttet.</strong>`;
+          controlsBox.innerHTML = "";
+          renderLease(null);
+          alert("Session avsluttet.");
+        } catch (err) {
+          const msg = (err && err.message) ? err.message : String(err);
+          setError(msg);
+          alert("End session feilet: " + msg);
         }
       });
     }
@@ -154,7 +323,7 @@
     function startLeaseTicker() {
       if (leaseTicker) clearInterval(leaseTicker);
       leaseTicker = setInterval(() => {
-        renderLease(lastState); // Kun UI. Ingen writes.
+        renderLease(lastState);
       }, 1000);
     }
 
@@ -182,7 +351,6 @@
         const user = await App.ensureSignedInWithGoogle();
         renderUser(user);
       } catch (err) {
-        console.error(err);
         setError(err && err.message ? err.message : String(err));
         alert("Innlogging feilet: " + (err && err.message ? err.message : "ukjent feil"));
       }
@@ -205,7 +373,6 @@
 
         attachStateListener(res.sessionId);
       } catch (err) {
-        console.error(err);
         const msg = (err && err.message) ? err.message : String(err);
         setError(msg);
         alert("Kunne ikke starte ny session: " + msg);
@@ -247,7 +414,6 @@
           renderControls();
         }
       } catch (e) {
-        console.error(e);
         setError(e && e.message ? e.message : String(e));
       }
     });
