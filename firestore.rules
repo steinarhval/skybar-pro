@@ -2,20 +2,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function uid() {
-      return request.auth.uid;
-    }
+    function isSignedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
 
     function isValidJoinCode(id) {
       return id.matches('^[A-Z0-9]{6}$');
     }
 
     function isString(x) { return x is string; }
-    function isNumber(x) { return x is number; }
     function isMap(x) { return x is map; }
 
     function sessionDoc(sessionId) {
@@ -28,9 +22,13 @@ service cloud.firestore {
         && sessionDoc(sessionId).data.ownerId == uid();
     }
 
-    // --- Public: join routing (read only) ---
+    // ---- Block accidental legacy path ----
+    match /programs/{programId} {
+      allow read, write: if false;
+    }
+
+    // ---- Public: join routing (read only) ----
     match /joinCodes/{joinCode} {
-      // Public read for routing (join.html / display / innhenting)
       allow read: if isValidJoinCode(joinCode);
 
       // Owner-only create/update (controller)
@@ -47,11 +45,12 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // --- Owners (auth only) ---
+    // ---- Owners (auth only) ----
     match /owners/{ownerId} {
       allow read, write: if isSignedIn() && uid() == ownerId;
 
-      // --- Steg 7: Programs per owner (robust list/get) ---
+      // ---- Steg 7: Programs (per owner) ----
+      // owners/{ownerId}/programs/{programId}
       match /programs/{programId} {
         allow get, list: if isSignedIn() && uid() == ownerId;
 
@@ -59,7 +58,7 @@ service cloud.firestore {
           && uid() == ownerId
           && isMap(request.resource.data)
           && request.resource.data.keys().hasOnly(['programId','ownerId','title','items','createdAt','updatedAt'])
-          && request.resource.data.ownerId == ownerId
+          && request.resource.data.ownerId == uid()
           && isString(request.resource.data.title)
           && request.resource.data.title.size() > 0
           && request.resource.data.title.size() <= 120
@@ -67,18 +66,13 @@ service cloud.firestore {
 
         allow update: if isSignedIn()
           && uid() == ownerId
-          && resource.data.ownerId == ownerId;
+          && resource.data.ownerId == uid();
 
         allow delete: if false; // MVP: ikke delete via klient
       }
     }
 
-    // --- Block old top-level programs path (prevent split model) ---
-    match /programs/{programId} {
-      allow read, write: if false;
-    }
-
-    // --- Sessions ---
+    // ---- Sessions ----
     match /sessions/{sessionId} {
 
       // Session metadata: owner-only
@@ -87,31 +81,30 @@ service cloud.firestore {
       allow update: if isSignedIn() && resource.data.ownerId == uid();
       allow delete: if false;
 
-      // --- Live state ---
+      // ---- Live state ----
       match /state/{docId} {
         // Display + deltaker kan lese state/live
         allow read: if docId == "live";
 
-        // Kun owner/controller kan skrive
+        // Kun owner/controller kan skrive (lease håndteres i app.js)
         allow write: if docId == "live" && isSessionOwner(sessionId);
       }
 
-      // --- Rounds ---
+      // ---- Rounds ----
       match /rounds/{roundId} {
 
-        // Owner må kunne lese/list rounds for eksport
+        // Viktig for eksport: owner må kunne lese/list rounds
         allow get, list: if isSessionOwner(sessionId);
 
         // Aggregated results: display reads only
         match /agg/{docId} {
           allow read: if docId == "live";
-          allow write: if false; // kun server (Admin SDK) skal skrive
+          allow write: if false; // kun server (Admin SDK)
         }
 
         // Votes: participant create-only, never update/delete
         match /votes/{clientId} {
-
-          // Vote-lock: deltaker kan lese egen vote-doc (GET), aldri liste
+          // vote-lock: deltaker må kunne lese sin egen vote-doc
           allow get: if true;
           allow list: if false;
 
