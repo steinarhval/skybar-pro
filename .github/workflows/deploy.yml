@@ -30,5 +30,9 @@ jobs:
         working-directory: functions
         run: npm install
 
-      - name: Deploy Hosting, Functions, Firestore Rules (+ Indexes)
-        run: firebase deploy --only hosting,functions,firestore:rules,firestore:indexes --force
+      - name: Deploy Hosting, Functions, Firestore Rules
+        run: firebase deploy --only hosting,functions,firestore:rules --force
+
+      - name: Deploy Firestore Indexes (only if present)
+        if: ${{ hashFiles('firestore.indexes.json') != '' }}
+        run: firebase deploy --only firestore:indexes --force
