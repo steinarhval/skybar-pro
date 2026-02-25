@@ -6,6 +6,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function uid() {
+      return request.auth.uid;
+    }
+
     function isValidJoinCode(id) {
       return id.matches('^[A-Z0-9]{6}$');
     }
@@ -14,31 +18,80 @@ service cloud.firestore {
     function isNumber(x) { return x is number; }
     function isMap(x) { return x is map; }
 
+    function sessionDoc(sessionId) {
+      return get(/databases/$(database)/documents/sessions/$(sessionId));
+    }
+
+    function isSessionOwner(sessionId) {
+      return isSignedIn()
+        && sessionDoc(sessionId).exists()
+        && sessionDoc(sessionId).data.ownerId == uid();
+    }
+
     // --- Public: join routing (read only) ---
     match /joinCodes/{joinCode} {
+      // Public read for routing (join.html / display / innhenting)
       allow read: if isValidJoinCode(joinCode);
-      allow write: if isSignedIn(); // controller/admin only (kan strammes mer senere per ownerId)
+
+      // Owner-only create/update (controller)
+      allow create: if isSignedIn()
+        && isMap(request.resource.data)
+        && request.resource.data.keys().hasOnly(['sessionId', 'ownerId', 'createdAt', 'active'])
+        && request.resource.data.ownerId == uid()
+        && isString(request.resource.data.sessionId)
+        && request.resource.data.active is bool;
+
+      allow update: if isSignedIn()
+        && resource.data.ownerId == uid();
+
+      allow delete: if false;
     }
 
     // --- Owners (auth only) ---
     match /owners/{ownerId} {
-      allow read, write: if isSignedIn() && request.auth.uid == ownerId;
+      allow read, write: if isSignedIn() && uid() == ownerId;
+    }
+
+    // --- Steg 7: Programs (owner-only) ---
+    match /programs/{programId} {
+      allow get, list: if isSignedIn() && resource.data.ownerId == uid();
+
+      allow create: if isSignedIn()
+        && isMap(request.resource.data)
+        && request.resource.data.keys().hasOnly(['programId','ownerId','title','items','createdAt','updatedAt'])
+        && request.resource.data.ownerId == uid()
+        && isString(request.resource.data.title)
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.items is list;
+
+      allow update: if isSignedIn() && resource.data.ownerId == uid();
+      allow delete: if false; // MVP: ikke delete via klient
     }
 
     // --- Sessions ---
     match /sessions/{sessionId} {
 
-      // Session metadata (auth only). Display/deltaker trenger ikke lese dette nå.
-      allow read, write: if isSignedIn();
+      // Session metadata: owner-only (strammer inn)
+      allow get, list: if isSignedIn() && resource.data.ownerId == uid();
+      allow create: if isSignedIn() && request.resource.data.ownerId == uid();
+      allow update: if isSignedIn() && resource.data.ownerId == uid();
+      allow delete: if false;
 
       // --- Live state ---
       match /state/{docId} {
-        allow read: if docId == "live";      // Display + deltaker kan lese state/live
-        allow write: if isSignedIn();        // Kun controller (auth)
+        // Display + deltaker kan lese state/live
+        allow read: if docId == "live";
+
+        // Kun owner/controller (auth) kan skrive (lease håndteres i app.js)
+        allow write: if docId == "live" && isSessionOwner(sessionId);
       }
 
       // --- Rounds ---
       match /rounds/{roundId} {
+
+        // Viktig for eksport: owner må kunne lese/list rounds for å finne roundIds
+        allow get, list: if isSessionOwner(sessionId);
 
         // Aggregated results: display reads only
         match /agg/{docId} {
@@ -49,21 +102,17 @@ service cloud.firestore {
         // Votes: participant create-only, never update/delete
         match /votes/{clientId} {
 
-          // ✅ NYTT: Deltaker må kunne lese sin egen vote-doc for vote-lock.
+          // Deltaker må kunne lese sin egen vote-doc for vote-lock.
           // Tillat kun GET (enkelt-dokument), aldri LIST (liste alle votes).
           allow get: if true;
           allow list: if false;
 
           allow create: if
-            // kun create (ikke update)
             !exists(/databases/$(database)/documents/sessions/$(sessionId)/rounds/$(roundId)/votes/$(clientId))
-            // grunnleggende struktur
             && isMap(request.resource.data)
             && request.resource.data.keys().hasOnly(['clientId', 'createdAt', 'mode', 'value'])
             && request.resource.data.clientId == clientId
-            && isString(request.resource.data.mode)
-            // createdAt skal settes av serverTimestamp fra klient (tillates som timestamp)
-            ;
+            && isString(request.resource.data.mode);
 
           allow update, delete: if false;
         }
