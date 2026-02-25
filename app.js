@@ -146,13 +146,8 @@
         .collection("agg").doc("live");
     },
 
-    // ---- Steg 7: Programs (NY path: owners/{ownerId}/programs/{programId}) ----
-    ownerProgramsCol: function (ownerId) {
-      return db.collection("owners").doc(ownerId).collection("programs");
-    },
-    programRef: function (ownerId, programId) {
-      return db.collection("owners").doc(ownerId).collection("programs").doc(programId);
-    },
+    // ---- Steg 7: Programs (TOP-LEVEL) ----
+    programRef: (programId) => db.collection("programs").doc(programId),
 
     // ---- Join routing (READ ONLY) ----
     resolveJoinCode: async function (joinCode) {
@@ -256,6 +251,7 @@
       return { ownerId, activeSessionId: o.activeSessionId, activeJoinCode: o.activeJoinCode };
     },
 
+    // ---- Start/replace session (ROBUST mot “råtne pekere”) ----
     startOrReplaceSession: async function (opts) {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -274,14 +270,26 @@
       const oldSessionId = ownerData.activeSessionId || null;
       const oldJoinCode = ownerData.activeJoinCode || null;
 
+      // Sjekk om gamle docs faktisk finnes før vi forsøker å “merge-sette” dem.
+      let oldSessionExists = false;
+      let oldJoinExists = false;
+
+      if (oldSessionId) {
+        const sSnap = await this.sessionRef(oldSessionId).get().catch(() => null);
+        oldSessionExists = !!(sSnap && sSnap.exists);
+      }
+      if (oldJoinCode) {
+        const jSnap = await this.joinCodeRef(String(oldJoinCode).toUpperCase()).get().catch(() => null);
+        oldJoinExists = !!(jSnap && jSnap.exists);
+      }
+
       const newSessionDocRef = db.collection("sessions").doc();
       const sessionId = newSessionDocRef.id;
-      if (sessionId === ownerId) throw new Error("Generert sessionId var lik ownerId (ikke tillatt).");
 
       const joinCode = await generateUniqueJoinCode();
       const batch = db.batch();
 
-      if (oldSessionId) {
+      if (oldSessionId && oldSessionExists) {
         batch.set(this.sessionRef(oldSessionId), {
           status: "ended",
           endedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -289,8 +297,8 @@
         }, { merge: true });
       }
 
-      if (oldJoinCode) {
-        batch.set(this.joinCodeRef(oldJoinCode), { active: false }, { merge: true });
+      if (oldJoinCode && oldJoinExists) {
+        batch.set(this.joinCodeRef(String(oldJoinCode).toUpperCase()), { active: false }, { merge: true });
       }
 
       batch.set(newSessionDocRef, {
@@ -363,6 +371,7 @@
       });
     },
 
+    // ---- Controller actions (Steg 6) ----
     setLiveStatusLease: async function (sessionId, status) {
       assertAllowedStatus(status);
       await this.writeLiveStateWithLease(sessionId, { status });
@@ -395,15 +404,15 @@
       return { roundId };
     },
 
-    // ---- Steg 7: Programs API (NY path) ----
+    // ---- Steg 7: Programs API (TOP-LEVEL) ----
     createProgram: async function (title, items) {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
 
       const ownerId = user.uid;
-      const col = this.ownerProgramsCol(ownerId);
-      const doc = col.doc();
+
+      const doc = db.collection("programs").doc();
       const programId = doc.id;
 
       const normalizedItems = normalizeProgramItems(items);
@@ -427,8 +436,8 @@
       if (!user) throw new Error("Ikke innlogget.");
 
       const ownerId = user.uid;
-
-      const qs = await this.ownerProgramsCol(ownerId)
+      const qs = await db.collection("programs")
+        .where("ownerId", "==", ownerId)
         .orderBy("updatedAt", "desc")
         .limit(100)
         .get();
@@ -453,12 +462,11 @@
       if (!user) throw new Error("Ikke innlogget.");
       if (!programId) throw new Error("Mangler programId.");
 
-      const ownerId = user.uid;
-      const snap = await this.programRef(ownerId, programId).get();
+      const snap = await this.programRef(programId).get();
       if (!snap.exists) throw new Error("Program finnes ikke.");
 
       const data = snap.data() || {};
-      if (data.ownerId !== ownerId) throw new Error("Ikke tilgang til dette programmet.");
+      if (data.ownerId !== user.uid) throw new Error("Ikke tilgang til dette programmet.");
 
       const items = normalizeProgramItems(Array.isArray(data.items) ? data.items : []);
       return {
@@ -482,7 +490,7 @@
       if (s.ownerId !== user.uid) throw new Error("Ikke tilgang til session.");
 
       if (programId) {
-        const pSnap = await this.programRef(user.uid, programId).get();
+        const pSnap = await this.programRef(programId).get();
         if (!pSnap.exists) throw new Error("Program finnes ikke.");
         const p = pSnap.data() || {};
         if (p.ownerId !== user.uid) throw new Error("Ikke tilgang til program.");
@@ -496,6 +504,7 @@
       return { ok: true, programId: programId || null };
     },
 
+    // ---- Export aggregated JSON ----
     exportAggregatedJson: async function (sessionId) {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -508,8 +517,7 @@
       const s = sSnap.data() || {};
       if (s.ownerId !== user.uid) throw new Error("Ikke tilgang til session.");
 
-      const saveResults = (s.saveResults === true);
-      if (!saveResults) {
+      if (s.saveResults !== true) {
         throw new Error("Eksport er deaktivert fordi saveResults=false for denne session.");
       }
 
