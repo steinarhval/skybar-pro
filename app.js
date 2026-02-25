@@ -99,6 +99,30 @@
     return Object.keys(out).length ? out : null;
   }
 
+  function normalizeProgramItems(items) {
+    if (!Array.isArray(items)) throw new Error("Program items må være en array.");
+    if (items.length < 1) throw new Error("Program må ha minst 1 item.");
+    if (items.length > 200) throw new Error("Program for stort (maks 200 items i MVP).");
+
+    return items.map((it, idx) => {
+      if (!isPlainObject(it)) throw new Error("Item #" + (idx + 1) + " er ikke et objekt.");
+      const mode = it.mode;
+      assertAllowedMode(mode);
+
+      const q = normalizeQuestionForMode(mode, it.question || {});
+      if (!q) throw new Error("Item #" + (idx + 1) + " mangler question (eller er tom).");
+
+      return { mode, question: q };
+    });
+  }
+
+  function sanitizeTitle(title) {
+    const t = String(title || "").trim();
+    if (!t) throw new Error("Program title mangler.");
+    if (t.length > 120) throw new Error("Program title er for lang (maks 120 tegn).");
+    return t;
+  }
+
   window.App = {
     db,
     auth,
@@ -125,6 +149,9 @@
         .collection("rounds").doc(roundId)
         .collection("agg").doc("live");
     },
+
+    // ---- Steg 7: Programs ----
+    programRef: (programId) => db.collection("programs").doc(programId),
 
     // ---- Join routing (READ ONLY) ----
     resolveJoinCode: async function (joinCode) {
@@ -378,6 +405,188 @@
           { id: "no", label: "nei" }
         ]
       });
+    },
+
+    // ---- Steg 7: Programs API ----
+    createProgram: async function (title, items) {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      const user = this.auth.currentUser;
+      if (!user) throw new Error("Ikke innlogget.");
+
+      const ownerId = user.uid;
+
+      const doc = db.collection("programs").doc();
+      const programId = doc.id;
+
+      const normalizedItems = normalizeProgramItems(items);
+      const safeTitle = sanitizeTitle(title);
+
+      await doc.set({
+        programId,
+        ownerId,
+        title: safeTitle,
+        items: normalizedItems,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: false });
+
+      return { programId };
+    },
+
+    updateProgram: async function (programId, title, items) {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      const user = this.auth.currentUser;
+      if (!user) throw new Error("Ikke innlogget.");
+
+      if (!programId) throw new Error("Mangler programId.");
+
+      const ref = this.programRef(programId);
+      const snap = await ref.get();
+      if (!snap.exists) throw new Error("Program finnes ikke.");
+
+      const data = snap.data() || {};
+      if (data.ownerId !== user.uid) throw new Error("Ikke tilgang til dette programmet.");
+
+      const patch = {
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+
+      if (typeof title === "string") patch.title = sanitizeTitle(title);
+      if (items != null) patch.items = normalizeProgramItems(items);
+
+      await ref.set(patch, { merge: true });
+      return { programId };
+    },
+
+    listProgramsForOwner: async function () {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      const user = this.auth.currentUser;
+      if (!user) throw new Error("Ikke innlogget.");
+
+      const ownerId = user.uid;
+      const qs = await db.collection("programs")
+        .where("ownerId", "==", ownerId)
+        .orderBy("updatedAt", "desc")
+        .limit(100)
+        .get();
+
+      const out = [];
+      qs.forEach((doc) => {
+        const d = doc.data() || {};
+        out.push({
+          programId: doc.id,
+          title: d.title || "(uten tittel)",
+          updatedAt: d.updatedAt || null,
+          createdAt: d.createdAt || null,
+          count: Array.isArray(d.items) ? d.items.length : 0
+        });
+      });
+      return out;
+    },
+
+    getProgram: async function (programId) {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      const user = this.auth.currentUser;
+      if (!user) throw new Error("Ikke innlogget.");
+
+      if (!programId) throw new Error("Mangler programId.");
+
+      const snap = await this.programRef(programId).get();
+      if (!snap.exists) throw new Error("Program finnes ikke.");
+
+      const data = snap.data() || {};
+      if (data.ownerId !== user.uid) throw new Error("Ikke tilgang til dette programmet.");
+
+      // Normaliser på vei ut, så vi ikke får “slack data” inn i controller.
+      const items = normalizeProgramItems(Array.isArray(data.items) ? data.items : []);
+      return {
+        programId: snap.id,
+        ownerId: data.ownerId,
+        title: data.title || "",
+        items
+      };
+    },
+
+    setSessionProgramId: async function (sessionId, programId) {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      const user = this.auth.currentUser;
+      if (!user) throw new Error("Ikke innlogget.");
+
+      if (!sessionId) throw new Error("Mangler sessionId.");
+
+      const sRef = this.sessionRef(sessionId);
+      const snap = await sRef.get();
+      if (!snap.exists) throw new Error("Session finnes ikke.");
+      const s = snap.data() || {};
+      if (s.ownerId !== user.uid) throw new Error("Ikke tilgang til session.");
+
+      // Valider programId om gitt
+      if (programId) {
+        const pSnap = await this.programRef(programId).get();
+        if (!pSnap.exists) throw new Error("Program finnes ikke.");
+        const p = pSnap.data() || {};
+        if (p.ownerId !== user.uid) throw new Error("Ikke tilgang til program.");
+      }
+
+      await sRef.set({
+        programId: programId || null,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      return { ok: true, programId: programId || null };
+    },
+
+    // ---- Steg 7: Export aggregated JSON (no votes) ----
+    exportAggregatedJson: async function (sessionId) {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      const user = this.auth.currentUser;
+      if (!user) throw new Error("Ikke innlogget.");
+      if (!sessionId) throw new Error("Mangler sessionId.");
+
+      const sSnap = await this.sessionRef(sessionId).get();
+      if (!sSnap.exists) throw new Error("Session finnes ikke.");
+
+      const s = sSnap.data() || {};
+      if (s.ownerId !== user.uid) throw new Error("Ikke tilgang til session.");
+
+      const saveResults = (s.saveResults === true);
+      if (!saveResults) {
+        throw new Error("Eksport er deaktivert fordi saveResults=false for denne session.");
+      }
+
+      // Les rounds (kun IDs), så les agg/live for hver.
+      const roundsSnap = await db.collection("sessions").doc(sessionId)
+        .collection("rounds")
+        .limit(500)
+        .get();
+
+      const roundIds = [];
+      roundsSnap.forEach((d) => roundIds.push(d.id));
+
+      const rounds = [];
+      for (const roundId of roundIds) {
+        const aSnap = await this.aggRef(sessionId, roundId).get();
+        if (!aSnap.exists) continue;
+        rounds.push({
+          roundId,
+          agg: aSnap.data() || {}
+        });
+      }
+
+      return {
+        exportedAtMs: Date.now(),
+        session: {
+          sessionId: s.sessionId || sessionId,
+          ownerId: s.ownerId || null,
+          status: s.status || null,
+          startedAt: s.startedAt || null,
+          endedAt: s.endedAt || null,
+          joinCode: s.joinCode || null,
+          saveResults: s.saveResults === true,
+          programId: s.programId || null
+        },
+        rounds
+      };
     },
 
     endSession: async function (sessionId) {
