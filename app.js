@@ -16,7 +16,7 @@
 
   const ALLOWED_MODES = new Set(["multi", "likert", "open", "wordcloud"]);
   const ALLOWED_STATUSES = new Set(["idle", "collect", "results", "paused"]); // Grunnlov
-
+ 
   function getOrCreateClientId() {
     let id = localStorage.getItem(CLIENT_ID_KEY);
     if (id && typeof id === "string" && id.length >= 8) return id;
@@ -629,3 +629,4 @@
   if (auth) auth.onAuthStateChanged(() => { });
 
 })();
+
