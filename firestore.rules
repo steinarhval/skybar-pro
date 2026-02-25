@@ -22,7 +22,7 @@ service cloud.firestore {
         && sessionDoc(sessionId).data.ownerId == uid();
     }
 
-    // ---- Block accidental legacy path ----
+    // ---- Block accidental legacy top-level path ----
     match /programs/{programId} {
       allow read, write: if false;
     }
@@ -31,7 +31,6 @@ service cloud.firestore {
     match /joinCodes/{joinCode} {
       allow read: if isValidJoinCode(joinCode);
 
-      // Owner-only create/update (controller)
       allow create: if isSignedIn()
         && isMap(request.resource.data)
         && request.resource.data.keys().hasOnly(['sessionId', 'ownerId', 'createdAt', 'active'])
@@ -45,12 +44,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // ---- Owners (auth only) ----
+    // ---- Owners ----
     match /owners/{ownerId} {
       allow read, write: if isSignedIn() && uid() == ownerId;
 
-      // ---- Steg 7: Programs (per owner) ----
-      // owners/{ownerId}/programs/{programId}
+      // ---- Steg 7: Programs under owner ----
       match /programs/{programId} {
         allow get, list: if isSignedIn() && uid() == ownerId;
 
@@ -68,7 +66,7 @@ service cloud.firestore {
           && uid() == ownerId
           && resource.data.ownerId == uid();
 
-        allow delete: if false; // MVP: ikke delete via klient
+        allow delete: if false;
       }
     }
 
@@ -76,35 +74,27 @@ service cloud.firestore {
     match /sessions/{sessionId} {
 
       // Session metadata: owner-only
-      allow get, list: if isSignedIn() && resource.data.ownerId == uid();
+      allow get: if isSignedIn() && resource.data.ownerId == uid();
       allow create: if isSignedIn() && request.resource.data.ownerId == uid();
       allow update: if isSignedIn() && resource.data.ownerId == uid();
-      allow delete: if false;
+      allow list, delete: if false;
 
       // ---- Live state ----
       match /state/{docId} {
-        // Display + deltaker kan lese state/live
         allow read: if docId == "live";
-
-        // Kun owner/controller kan skrive (lease håndteres i app.js)
         allow write: if docId == "live" && isSessionOwner(sessionId);
       }
 
       // ---- Rounds ----
       match /rounds/{roundId} {
-
-        // Viktig for eksport: owner må kunne lese/list rounds
         allow get, list: if isSessionOwner(sessionId);
 
-        // Aggregated results: display reads only
         match /agg/{docId} {
           allow read: if docId == "live";
           allow write: if false; // kun server (Admin SDK)
         }
 
-        // Votes: participant create-only, never update/delete
         match /votes/{clientId} {
-          // vote-lock: deltaker må kunne lese sin egen vote-doc
           allow get: if true;
           allow list: if false;
 
