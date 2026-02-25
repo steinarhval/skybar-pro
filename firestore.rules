@@ -5,9 +5,7 @@ service cloud.firestore {
     function isSignedIn() { return request.auth != null; }
     function uid() { return request.auth.uid; }
 
-    function isValidJoinCode(id) {
-      return id.matches('^[A-Z0-9]{6}$');
-    }
+    function isValidJoinCode(id) { return id.matches('^[A-Z0-9]{6}$'); }
 
     function isString(x) { return x is string; }
     function isMap(x) { return x is map; }
@@ -22,15 +20,11 @@ service cloud.firestore {
         && sessionDoc(sessionId).data.ownerId == uid();
     }
 
-    // ---- Block accidental legacy top-level path ----
-    match /programs/{programId} {
-      allow read, write: if false;
-    }
-
-    // ---- Public: join routing (read only) ----
+    // --- Public: join routing (read only) ---
     match /joinCodes/{joinCode} {
       allow read: if isValidJoinCode(joinCode);
 
+      // Owner-only create/update (controller)
       allow create: if isSignedIn()
         && isMap(request.resource.data)
         && request.resource.data.keys().hasOnly(['sessionId', 'ownerId', 'createdAt', 'active'])
@@ -44,59 +38,63 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // ---- Owners ----
+    // --- Owners (auth only) ---
     match /owners/{ownerId} {
       allow read, write: if isSignedIn() && uid() == ownerId;
-
-      // ---- Steg 7: Programs under owner ----
-      match /programs/{programId} {
-        allow get, list: if isSignedIn() && uid() == ownerId;
-
-        allow create: if isSignedIn()
-          && uid() == ownerId
-          && isMap(request.resource.data)
-          && request.resource.data.keys().hasOnly(['programId','ownerId','title','items','createdAt','updatedAt'])
-          && request.resource.data.ownerId == uid()
-          && isString(request.resource.data.title)
-          && request.resource.data.title.size() > 0
-          && request.resource.data.title.size() <= 120
-          && request.resource.data.items is list;
-
-        allow update: if isSignedIn()
-          && uid() == ownerId
-          && resource.data.ownerId == uid();
-
-        allow delete: if false;
-      }
     }
 
-    // ---- Sessions ----
+    // --- Steg 7: Programs (TOP-LEVEL) ---
+    match /programs/{programId} {
+
+      // lesing: owner-only (get/list)
+      allow get, list: if isSignedIn() && resource.data.ownerId == uid();
+
+      // create: owner-only + enkel validering
+      allow create: if isSignedIn()
+        && isMap(request.resource.data)
+        && request.resource.data.keys().hasOnly(['programId','ownerId','title','items','createdAt','updatedAt'])
+        && request.resource.data.ownerId == uid()
+        && isString(request.resource.data.title)
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.items is list;
+
+      allow update: if isSignedIn() && resource.data.ownerId == uid();
+      allow delete: if false;
+    }
+
+    // --- Sessions ---
     match /sessions/{sessionId} {
 
       // Session metadata: owner-only
       allow get: if isSignedIn() && resource.data.ownerId == uid();
       allow create: if isSignedIn() && request.resource.data.ownerId == uid();
       allow update: if isSignedIn() && resource.data.ownerId == uid();
+
+      // Ikke la klient liste alle sessions i MVP
       allow list, delete: if false;
 
-      // ---- Live state ----
+      // --- Live state ---
       match /state/{docId} {
-        allow read: if docId == "live";
-        allow write: if docId == "live" && isSessionOwner(sessionId);
+        allow read: if docId == "live";                 // display + deltaker kan lese
+        allow write: if docId == "live" && isSessionOwner(sessionId); // kun owner/controller
       }
 
-      // ---- Rounds ----
+      // --- Rounds ---
       match /rounds/{roundId} {
+        // viktig for eksport: owner må kunne liste/get rounds
         allow get, list: if isSessionOwner(sessionId);
 
+        // Aggregated results: display reads only
         match /agg/{docId} {
           allow read: if docId == "live";
           allow write: if false; // kun server (Admin SDK)
         }
 
+        // Votes: participant create-only, never update/delete
         match /votes/{clientId} {
-          allow get: if true;
-          allow list: if false;
+          allow get: if true;     // vote-lock trenger dette
+          allow list: if false;   // aldri liste alle votes
 
           allow create: if
             !exists(/databases/$(database)/documents/sessions/$(sessionId)/rounds/$(roundId)/votes/$(clientId))
