@@ -75,8 +75,6 @@
   }
 
   function normalizeQuestionForMode(mode, question) {
-    // State skal ikke inneholde svar, kun styring. Vi lagrer bare det deltaker/visning trenger.
-    // Innhenting bruker question.choices for multi; ellers er question kun metadata.
     if (!question) return null;
 
     if (mode === "multi") {
@@ -92,7 +90,6 @@
       return { choices: norm, text: question.text != null ? String(question.text) : null };
     }
 
-    // likert/open/wordcloud: behold kun text + evt. fremtidige felt (men stramt)
     if (!isPlainObject(question)) throw new Error("question må være et objekt.");
     const out = {};
     if (question.text != null) out.text = String(question.text);
@@ -143,20 +140,18 @@
         .collection("votes").doc(clientId);
     },
 
-    // agg doc ref
     aggRef: function (sessionId, roundId) {
       return db.collection("sessions").doc(sessionId)
         .collection("rounds").doc(roundId)
         .collection("agg").doc("live");
     },
 
-    // ---- Steg 7: Programs (per owner) ----
-    // owners/{ownerId}/programs/{programId}
-    ownerProgramsCol: (ownerId) => db.collection("owners").doc(ownerId).collection("programs"),
+    // ---- Steg 7: Programs (NY path: owners/{ownerId}/programs/{programId}) ----
+    ownerProgramsCol: function (ownerId) {
+      return db.collection("owners").doc(ownerId).collection("programs");
+    },
     programRef: function (ownerId, programId) {
-      if (!ownerId) throw new Error("Mangler ownerId for programRef.");
-      if (!programId) throw new Error("Mangler programId for programRef.");
-      return this.ownerProgramsCol(ownerId).doc(programId);
+      return db.collection("owners").doc(ownerId).collection("programs").doc(programId);
     },
 
     // ---- Join routing (READ ONLY) ----
@@ -356,7 +351,6 @@
         const untilMs = toMillisMaybe(cur.controllerLeaseUntil);
         const active = (untilMs !== null) ? (untilMs > nowMs()) : false;
 
-        // Ingen takeover i Steg 6
         if (active && curCid && curCid !== myControllerId) {
           throw new Error("Lease aktiv hos annen controller. Kan ikke skrive nå.");
         }
@@ -369,7 +363,6 @@
       });
     },
 
-    // ---- Controller actions (Steg 6) ----
     setLiveStatusLease: async function (sessionId, status) {
       assertAllowedStatus(status);
       await this.writeLiveStateWithLease(sessionId, { status });
@@ -385,7 +378,6 @@
     setQuestionLease: async function (sessionId, mode, question) {
       assertAllowedMode(mode);
       const q = normalizeQuestionForMode(mode, question);
-      // Setter question/mode, men rører ikke roundId (ingen reset).
       await this.writeLiveStateWithLease(sessionId, { mode, question: q });
       return { mode };
     },
@@ -403,24 +395,13 @@
       return { roundId };
     },
 
-    // Fortsatt tilgjengelig (nå via startQuestionLease i UI, men greit å beholde)
-    startMultiYesNo: async function (sessionId) {
-      return await this.startQuestionLease(sessionId, "multi", {
-        choices: [
-          { id: "yes", label: "ja" },
-          { id: "no", label: "nei" }
-        ]
-      });
-    },
-
-    // ---- Steg 7: Programs API ----
+    // ---- Steg 7: Programs API (NY path) ----
     createProgram: async function (title, items) {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
 
       const ownerId = user.uid;
-
       const col = this.ownerProgramsCol(ownerId);
       const doc = col.doc();
       const programId = doc.id;
@@ -440,33 +421,6 @@
       return { programId };
     },
 
-    updateProgram: async function (programId, title, items) {
-      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
-      const user = this.auth.currentUser;
-      if (!user) throw new Error("Ikke innlogget.");
-
-      if (!programId) throw new Error("Mangler programId.");
-
-      const ownerId = user.uid;
-      const ref = this.programRef(ownerId, programId);
-
-      const snap = await ref.get();
-      if (!snap.exists) throw new Error("Program finnes ikke.");
-
-      const data = snap.data() || {};
-      if (data.ownerId !== ownerId) throw new Error("Ikke tilgang til dette programmet.");
-
-      const patch = {
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      };
-
-      if (typeof title === "string") patch.title = sanitizeTitle(title);
-      if (items != null) patch.items = normalizeProgramItems(items);
-
-      await ref.set(patch, { merge: true });
-      return { programId };
-    },
-
     listProgramsForOwner: async function () {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -474,7 +428,6 @@
 
       const ownerId = user.uid;
 
-      // Per-owner collection: owners/{ownerId}/programs
       const qs = await this.ownerProgramsCol(ownerId)
         .orderBy("updatedAt", "desc")
         .limit(100)
@@ -498,7 +451,6 @@
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
-
       if (!programId) throw new Error("Mangler programId.");
 
       const ownerId = user.uid;
@@ -508,7 +460,6 @@
       const data = snap.data() || {};
       if (data.ownerId !== ownerId) throw new Error("Ikke tilgang til dette programmet.");
 
-      // Normaliser på vei ut, så vi ikke får “slack data” inn i controller.
       const items = normalizeProgramItems(Array.isArray(data.items) ? data.items : []);
       return {
         programId: snap.id,
@@ -522,7 +473,6 @@
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
-
       if (!sessionId) throw new Error("Mangler sessionId.");
 
       const sRef = this.sessionRef(sessionId);
@@ -531,14 +481,11 @@
       const s = snap.data() || {};
       if (s.ownerId !== user.uid) throw new Error("Ikke tilgang til session.");
 
-      const ownerId = user.uid;
-
-      // Valider programId om gitt (owner-only doc)
       if (programId) {
-        const pSnap = await this.programRef(ownerId, programId).get();
+        const pSnap = await this.programRef(user.uid, programId).get();
         if (!pSnap.exists) throw new Error("Program finnes ikke.");
         const p = pSnap.data() || {};
-        if (p.ownerId !== ownerId) throw new Error("Ikke tilgang til program.");
+        if (p.ownerId !== user.uid) throw new Error("Ikke tilgang til program.");
       }
 
       await sRef.set({
@@ -549,7 +496,6 @@
       return { ok: true, programId: programId || null };
     },
 
-    // ---- Steg 7: Export aggregated JSON (no votes) ----
     exportAggregatedJson: async function (sessionId) {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -567,7 +513,6 @@
         throw new Error("Eksport er deaktivert fordi saveResults=false for denne session.");
       }
 
-      // Les rounds (kun IDs), så les agg/live for hver.
       const roundsSnap = await db.collection("sessions").doc(sessionId)
         .collection("rounds")
         .limit(500)
@@ -580,10 +525,7 @@
       for (const roundId of roundIds) {
         const aSnap = await this.aggRef(sessionId, roundId).get();
         if (!aSnap.exists) continue;
-        rounds.push({
-          roundId,
-          agg: aSnap.data() || {}
-        });
+        rounds.push({ roundId, agg: aSnap.data() || {} });
       }
 
       return {
