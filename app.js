@@ -16,7 +16,7 @@
 
   const ALLOWED_MODES = new Set(["multi", "likert", "open", "wordcloud"]);
   const ALLOWED_STATUSES = new Set(["idle", "collect", "results", "paused"]); // Grunnlov
- 
+
   function getOrCreateClientId() {
     let id = localStorage.getItem(CLIENT_ID_KEY);
     if (id && typeof id === "string" && id.length >= 8) return id;
@@ -150,8 +150,14 @@
         .collection("agg").doc("live");
     },
 
-    // ---- Steg 7: Programs ----
-    programRef: (programId) => db.collection("programs").doc(programId),
+    // ---- Steg 7: Programs (per owner) ----
+    // owners/{ownerId}/programs/{programId}
+    ownerProgramsCol: (ownerId) => db.collection("owners").doc(ownerId).collection("programs"),
+    programRef: function (ownerId, programId) {
+      if (!ownerId) throw new Error("Mangler ownerId for programRef.");
+      if (!programId) throw new Error("Mangler programId for programRef.");
+      return this.ownerProgramsCol(ownerId).doc(programId);
+    },
 
     // ---- Join routing (READ ONLY) ----
     resolveJoinCode: async function (joinCode) {
@@ -415,7 +421,8 @@
 
       const ownerId = user.uid;
 
-      const doc = db.collection("programs").doc();
+      const col = this.ownerProgramsCol(ownerId);
+      const doc = col.doc();
       const programId = doc.id;
 
       const normalizedItems = normalizeProgramItems(items);
@@ -440,12 +447,14 @@
 
       if (!programId) throw new Error("Mangler programId.");
 
-      const ref = this.programRef(programId);
+      const ownerId = user.uid;
+      const ref = this.programRef(ownerId, programId);
+
       const snap = await ref.get();
       if (!snap.exists) throw new Error("Program finnes ikke.");
 
       const data = snap.data() || {};
-      if (data.ownerId !== user.uid) throw new Error("Ikke tilgang til dette programmet.");
+      if (data.ownerId !== ownerId) throw new Error("Ikke tilgang til dette programmet.");
 
       const patch = {
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -464,8 +473,9 @@
       if (!user) throw new Error("Ikke innlogget.");
 
       const ownerId = user.uid;
-      const qs = await db.collection("programs")
-        .where("ownerId", "==", ownerId)
+
+      // Per-owner collection: owners/{ownerId}/programs
+      const qs = await this.ownerProgramsCol(ownerId)
         .orderBy("updatedAt", "desc")
         .limit(100)
         .get();
@@ -491,11 +501,12 @@
 
       if (!programId) throw new Error("Mangler programId.");
 
-      const snap = await this.programRef(programId).get();
+      const ownerId = user.uid;
+      const snap = await this.programRef(ownerId, programId).get();
       if (!snap.exists) throw new Error("Program finnes ikke.");
 
       const data = snap.data() || {};
-      if (data.ownerId !== user.uid) throw new Error("Ikke tilgang til dette programmet.");
+      if (data.ownerId !== ownerId) throw new Error("Ikke tilgang til dette programmet.");
 
       // Normaliser på vei ut, så vi ikke får “slack data” inn i controller.
       const items = normalizeProgramItems(Array.isArray(data.items) ? data.items : []);
@@ -520,12 +531,14 @@
       const s = snap.data() || {};
       if (s.ownerId !== user.uid) throw new Error("Ikke tilgang til session.");
 
-      // Valider programId om gitt
+      const ownerId = user.uid;
+
+      // Valider programId om gitt (owner-only doc)
       if (programId) {
-        const pSnap = await this.programRef(programId).get();
+        const pSnap = await this.programRef(ownerId, programId).get();
         if (!pSnap.exists) throw new Error("Program finnes ikke.");
         const p = pSnap.data() || {};
-        if (p.ownerId !== user.uid) throw new Error("Ikke tilgang til program.");
+        if (p.ownerId !== ownerId) throw new Error("Ikke tilgang til program.");
       }
 
       await sRef.set({
@@ -629,4 +642,3 @@
   if (auth) auth.onAuthStateChanged(() => { });
 
 })();
-
