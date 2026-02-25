@@ -50,29 +50,38 @@ service cloud.firestore {
     // --- Owners (auth only) ---
     match /owners/{ownerId} {
       allow read, write: if isSignedIn() && uid() == ownerId;
+
+      // --- Steg 7: Programs per owner (robust list/get) ---
+      match /programs/{programId} {
+        allow get, list: if isSignedIn() && uid() == ownerId;
+
+        allow create: if isSignedIn()
+          && uid() == ownerId
+          && isMap(request.resource.data)
+          && request.resource.data.keys().hasOnly(['programId','ownerId','title','items','createdAt','updatedAt'])
+          && request.resource.data.ownerId == ownerId
+          && isString(request.resource.data.title)
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.items is list;
+
+        allow update: if isSignedIn()
+          && uid() == ownerId
+          && resource.data.ownerId == ownerId;
+
+        allow delete: if false; // MVP: ikke delete via klient
+      }
     }
 
-    // --- Steg 7: Programs (owner-only) ---
+    // --- Block old top-level programs path (prevent split model) ---
     match /programs/{programId} {
-      allow get, list: if isSignedIn() && resource.data.ownerId == uid();
-
-      allow create: if isSignedIn()
-        && isMap(request.resource.data)
-        && request.resource.data.keys().hasOnly(['programId','ownerId','title','items','createdAt','updatedAt'])
-        && request.resource.data.ownerId == uid()
-        && isString(request.resource.data.title)
-        && request.resource.data.title.size() > 0
-        && request.resource.data.title.size() <= 120
-        && request.resource.data.items is list;
-
-      allow update: if isSignedIn() && resource.data.ownerId == uid();
-      allow delete: if false; // MVP: ikke delete via klient
+      allow read, write: if false;
     }
 
     // --- Sessions ---
     match /sessions/{sessionId} {
 
-      // Session metadata: owner-only (strammer inn)
+      // Session metadata: owner-only
       allow get, list: if isSignedIn() && resource.data.ownerId == uid();
       allow create: if isSignedIn() && request.resource.data.ownerId == uid();
       allow update: if isSignedIn() && resource.data.ownerId == uid();
@@ -83,14 +92,14 @@ service cloud.firestore {
         // Display + deltaker kan lese state/live
         allow read: if docId == "live";
 
-        // Kun owner/controller (auth) kan skrive (lease håndteres i app.js)
+        // Kun owner/controller kan skrive
         allow write: if docId == "live" && isSessionOwner(sessionId);
       }
 
       // --- Rounds ---
       match /rounds/{roundId} {
 
-        // Viktig for eksport: owner må kunne lese/list rounds for å finne roundIds
+        // Owner må kunne lese/list rounds for eksport
         allow get, list: if isSessionOwner(sessionId);
 
         // Aggregated results: display reads only
@@ -102,8 +111,7 @@ service cloud.firestore {
         // Votes: participant create-only, never update/delete
         match /votes/{clientId} {
 
-          // Deltaker må kunne lese sin egen vote-doc for vote-lock.
-          // Tillat kun GET (enkelt-dokument), aldri LIST (liste alle votes).
+          // Vote-lock: deltaker kan lese egen vote-doc (GET), aldri liste
           allow get: if true;
           allow list: if false;
 
