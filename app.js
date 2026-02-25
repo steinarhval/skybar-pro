@@ -75,6 +75,8 @@
   }
 
   function normalizeQuestionForMode(mode, question) {
+    // State skal ikke inneholde svar, kun styring. Vi lagrer bare det deltaker/visning trenger.
+    // Innhenting bruker question.choices for multi; ellers er question kun metadata.
     if (!question) return null;
 
     if (mode === "multi") {
@@ -90,6 +92,7 @@
       return { choices: norm, text: question.text != null ? String(question.text) : null };
     }
 
+    // likert/open/wordcloud: behold kun text + evt. fremtidige felt (men stramt)
     if (!isPlainObject(question)) throw new Error("question må være et objekt.");
     const out = {};
     if (question.text != null) out.text = String(question.text);
@@ -140,13 +143,14 @@
         .collection("votes").doc(clientId);
     },
 
+    // agg doc ref
     aggRef: function (sessionId, roundId) {
       return db.collection("sessions").doc(sessionId)
         .collection("rounds").doc(roundId)
         .collection("agg").doc("live");
     },
 
-    // ---- Steg 7: Programs (TOP-LEVEL) ----
+    // ---- Steg 7: Programs ----
     programRef: (programId) => db.collection("programs").doc(programId),
 
     // ---- Join routing (READ ONLY) ----
@@ -251,7 +255,6 @@
       return { ownerId, activeSessionId: o.activeSessionId, activeJoinCode: o.activeJoinCode };
     },
 
-    // ---- Start/replace session (ROBUST mot “råtne pekere”) ----
     startOrReplaceSession: async function (opts) {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -270,26 +273,14 @@
       const oldSessionId = ownerData.activeSessionId || null;
       const oldJoinCode = ownerData.activeJoinCode || null;
 
-      // Sjekk om gamle docs faktisk finnes før vi forsøker å “merge-sette” dem.
-      let oldSessionExists = false;
-      let oldJoinExists = false;
-
-      if (oldSessionId) {
-        const sSnap = await this.sessionRef(oldSessionId).get().catch(() => null);
-        oldSessionExists = !!(sSnap && sSnap.exists);
-      }
-      if (oldJoinCode) {
-        const jSnap = await this.joinCodeRef(String(oldJoinCode).toUpperCase()).get().catch(() => null);
-        oldJoinExists = !!(jSnap && jSnap.exists);
-      }
-
       const newSessionDocRef = db.collection("sessions").doc();
       const sessionId = newSessionDocRef.id;
+      if (sessionId === ownerId) throw new Error("Generert sessionId var lik ownerId (ikke tillatt).");
 
       const joinCode = await generateUniqueJoinCode();
       const batch = db.batch();
 
-      if (oldSessionId && oldSessionExists) {
+      if (oldSessionId) {
         batch.set(this.sessionRef(oldSessionId), {
           status: "ended",
           endedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -297,10 +288,11 @@
         }, { merge: true });
       }
 
-      if (oldJoinCode && oldJoinExists) {
-        batch.set(this.joinCodeRef(String(oldJoinCode).toUpperCase()), { active: false }, { merge: true });
+      if (oldJoinCode) {
+        batch.set(this.joinCodeRef(oldJoinCode), { active: false }, { merge: true });
       }
 
+      // 1) Opprett session (metadata)
       batch.set(newSessionDocRef, {
         sessionId,
         ownerId,
@@ -313,6 +305,7 @@
         programId
       }, { merge: false });
 
+      // 2) Opprett joinCode routing
       batch.set(this.joinCodeRef(joinCode), {
         sessionId,
         ownerId,
@@ -320,13 +313,21 @@
         active: true
       }, { merge: false });
 
+      // 3) Oppdater owner-peker
       batch.set(ownerDocRef, {
         activeSessionId: sessionId,
         activeJoinCode: joinCode,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      batch.set(this.liveStateRef(sessionId), {
+      // FIX:
+      // IKKE skriv state/live i samme batch som oppretter sessions/{sessionId},
+      // fordi rules sin isSessionOwner() gjør get() og ser ikke sessionen som "eksisterende"
+      // innenfor samme batch-evaluering. Det gir "Missing or insufficient permissions".
+      await batch.commit();
+
+      // 4) Opprett state/live ETTER at session-dok finnes
+      await this.liveStateRef(sessionId).set({
         sessionId,
         status: "idle",
         mode: null,
@@ -338,7 +339,6 @@
         controllerLeaseUntil: leaseUntilTimestampFromNow()
       }, { merge: false });
 
-      await batch.commit();
       return { ownerId, sessionId, joinCode };
     },
 
@@ -359,6 +359,7 @@
         const untilMs = toMillisMaybe(cur.controllerLeaseUntil);
         const active = (untilMs !== null) ? (untilMs > nowMs()) : false;
 
+        // Ingen takeover i Steg 6
         if (active && curCid && curCid !== myControllerId) {
           throw new Error("Lease aktiv hos annen controller. Kan ikke skrive nå.");
         }
@@ -387,6 +388,7 @@
     setQuestionLease: async function (sessionId, mode, question) {
       assertAllowedMode(mode);
       const q = normalizeQuestionForMode(mode, question);
+      // Setter question/mode, men rører ikke roundId (ingen reset).
       await this.writeLiveStateWithLease(sessionId, { mode, question: q });
       return { mode };
     },
@@ -404,7 +406,17 @@
       return { roundId };
     },
 
-    // ---- Steg 7: Programs API (TOP-LEVEL) ----
+    // Fortsatt tilgjengelig (nå via startQuestionLease i UI, men greit å beholde)
+    startMultiYesNo: async function (sessionId) {
+      return await this.startQuestionLease(sessionId, "multi", {
+        choices: [
+          { id: "yes", label: "ja" },
+          { id: "no", label: "nei" }
+        ]
+      });
+    },
+
+    // ---- Steg 7: Programs API ----
     createProgram: async function (title, items) {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -427,6 +439,31 @@
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: false });
 
+      return { programId };
+    },
+
+    updateProgram: async function (programId, title, items) {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      const user = this.auth.currentUser;
+      if (!user) throw new Error("Ikke innlogget.");
+
+      if (!programId) throw new Error("Mangler programId.");
+
+      const ref = this.programRef(programId);
+      const snap = await ref.get();
+      if (!snap.exists) throw new Error("Program finnes ikke.");
+
+      const data = snap.data() || {};
+      if (data.ownerId !== user.uid) throw new Error("Ikke tilgang til dette programmet.");
+
+      const patch = {
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+
+      if (typeof title === "string") patch.title = sanitizeTitle(title);
+      if (items != null) patch.items = normalizeProgramItems(items);
+
+      await ref.set(patch, { merge: true });
       return { programId };
     },
 
@@ -460,6 +497,7 @@
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
+
       if (!programId) throw new Error("Mangler programId.");
 
       const snap = await this.programRef(programId).get();
@@ -468,6 +506,7 @@
       const data = snap.data() || {};
       if (data.ownerId !== user.uid) throw new Error("Ikke tilgang til dette programmet.");
 
+      // Normaliser på vei ut, så vi ikke får “slack data” inn i controller.
       const items = normalizeProgramItems(Array.isArray(data.items) ? data.items : []);
       return {
         programId: snap.id,
@@ -481,6 +520,7 @@
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
+
       if (!sessionId) throw new Error("Mangler sessionId.");
 
       const sRef = this.sessionRef(sessionId);
@@ -489,6 +529,7 @@
       const s = snap.data() || {};
       if (s.ownerId !== user.uid) throw new Error("Ikke tilgang til session.");
 
+      // Valider programId om gitt
       if (programId) {
         const pSnap = await this.programRef(programId).get();
         if (!pSnap.exists) throw new Error("Program finnes ikke.");
@@ -504,7 +545,7 @@
       return { ok: true, programId: programId || null };
     },
 
-    // ---- Export aggregated JSON ----
+    // ---- Steg 7: Export aggregated JSON (no votes) ----
     exportAggregatedJson: async function (sessionId) {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -517,10 +558,12 @@
       const s = sSnap.data() || {};
       if (s.ownerId !== user.uid) throw new Error("Ikke tilgang til session.");
 
-      if (s.saveResults !== true) {
+      const saveResults = (s.saveResults === true);
+      if (!saveResults) {
         throw new Error("Eksport er deaktivert fordi saveResults=false for denne session.");
       }
 
+      // Les rounds (kun IDs), så les agg/live for hver.
       const roundsSnap = await db.collection("sessions").doc(sessionId)
         .collection("rounds")
         .limit(500)
@@ -533,7 +576,10 @@
       for (const roundId of roundIds) {
         const aSnap = await this.aggRef(sessionId, roundId).get();
         if (!aSnap.exists) continue;
-        rounds.push({ roundId, agg: aSnap.data() || {} });
+        rounds.push({
+          roundId,
+          agg: aSnap.data() || {}
+        });
       }
 
       return {
