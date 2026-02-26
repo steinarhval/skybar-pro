@@ -13,8 +13,6 @@
   <button id="loginBtn">Logg inn med Google</button>
   <button id="startSessionBtn">Start ny session</button>
 
-  <div id="programsBox" class="mt20"></div>
-
   <div id="controlsBox" class="mt20"></div>
 
   <div id="sessionBox" class="mt20"></div>
@@ -40,7 +38,6 @@
     const statusBox = document.getElementById("statusBox");
     const errorBox = document.getElementById("errorBox");
     const controlsBox = document.getElementById("controlsBox");
-    const programsBox = document.getElementById("programsBox");
 
     let activeSessionId = null;
     let activeJoinCode = null;
@@ -48,13 +45,6 @@
     let unsubscribe = null;
     let leaseTicker = null;
     let lastState = null;
-
-    // Steg 7 UI-state (kun lokalt, ingen auto-writes)
-    let currentUser = null;
-    let programDraftItems = [];       // [{mode, question}]
-    let programsCache = [];           // list for owner
-    let loadedProgram = null;         // {programId,title,items}
-    let loadedProgramIndex = 0;
 
     function escapeHtml(s) {
       return String(s)
@@ -208,21 +198,6 @@
       document.body.removeChild(ta);
     }
 
-    function downloadJson(filename, obj) {
-      const json = JSON.stringify(obj, null, 2);
-      const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-
-      URL.revokeObjectURL(url);
-    }
-
     function renderSessionBox() {
       if (!activeSessionId) {
         sessionBox.innerHTML = "";
@@ -291,367 +266,6 @@
       }
     }
 
-    // -------- Steg 7: Programs UI --------
-
-    function renderProgramDraftList() {
-      if (!programDraftItems.length) return `<em>Ingen items i draft ennå.</em>`;
-      const rows = programDraftItems.map((it, idx) => {
-        const t = it && it.question && it.question.text ? it.question.text : "";
-        return `
-          <div class="mt10">
-            <span class="mono">#${idx + 1}</span>
-            <strong>${escapeHtml(it.mode)}</strong>
-            ${t ? `– ${escapeHtml(t)}` : ""}
-            <button class="btn" data-act="draftLoad" data-idx="${idx}">Last til editor</button>
-            <button class="btn" data-act="draftRemove" data-idx="${idx}">Fjern</button>
-          </div>
-        `;
-      }).join("");
-      return rows;
-    }
-
-    function renderLoadedProgramList() {
-      if (!loadedProgram) return `<em>Ingen program lastet.</em>`;
-      const rows = loadedProgram.items.map((it, idx) => {
-        const t = it && it.question && it.question.text ? it.question.text : "";
-        const isSel = idx === loadedProgramIndex;
-        return `
-          <div class="mt10">
-            <span class="mono">#${idx + 1}</span>
-            <strong>${escapeHtml(it.mode)}</strong>
-            ${t ? `– ${escapeHtml(t)}` : ""}
-            <button class="btn" data-act="progSelect" data-idx="${idx}" ${isSel ? "disabled" : ""}>Velg</button>
-            <button class="btn" data-act="progLoadEditor" data-idx="${idx}">Last til editor</button>
-          </div>
-        `;
-      }).join("");
-      return rows;
-    }
-
-    function renderProgramsBox() {
-      if (!currentUser) {
-        programsBox.innerHTML = "";
-        return;
-      }
-
-      const activePid = "(hentes fra session ved attach)";
-      const loadedTitle = loadedProgram ? loadedProgram.title : "";
-      const loadedId = loadedProgram ? loadedProgram.programId : "";
-
-      const progOptions = programsCache.length
-        ? programsCache.map(p => `<option value="${escapeHtml(p.programId)}">${escapeHtml(p.title)} (${p.count})</option>`).join("")
-        : `<option value="">(ingen programmer)</option>`;
-
-      programsBox.innerHTML = `
-        <strong>Programs + eksport (Steg 7)</strong><br>
-        <div class="mt10">
-          <label>Programtittel:</label><br>
-          <input id="progTitle" class="inputWide" placeholder="F.eks. Septemberkonferansen – Del 1" />
-        </div>
-
-        <div class="mt10 btnRow">
-          <button class="btn" id="addDraftItemBtn" ${activeSessionId ? "" : "disabled"}>Legg til spørsmål (fra editor) i draft</button>
-          <button class="btn" id="clearDraftBtn">Tøm draft</button>
-        </div>
-
-        <div class="mt10">
-          <strong>Draft (spørsmålssett)</strong><br>
-          ${renderProgramDraftList()}
-        </div>
-
-        <div class="mt20 btnRow">
-          <button class="btn" id="saveNewProgramBtn">Lagre nytt program</button>
-          <button class="btn" id="refreshProgramsBtn">Oppdater programliste</button>
-        </div>
-
-        <hr class="mt20">
-
-        <div class="mt10">
-          <strong>Mine programmer</strong><br>
-          <select id="programSel" class="inputWide">
-            <option value="">(velg program)</option>
-            ${progOptions}
-          </select>
-        </div>
-
-        <div class="mt10 btnRow">
-          <button class="btn" id="loadProgramBtn">Last program</button>
-          <button class="btn" id="attachProgramBtn" ${activeSessionId ? "" : "disabled"}>Bruk program i aktiv session</button>
-        </div>
-
-        <div class="mt10">
-          Lastet program: <span class="mono">${escapeHtml(loadedId || "-")}</span><br>
-          Tittel: ${escapeHtml(loadedTitle || "-")}
-        </div>
-
-        <div class="mt10">
-          <strong>Spørsmål i lastet program</strong><br>
-          ${renderLoadedProgramList()}
-        </div>
-
-        <div class="mt20 btnRow">
-          <button class="btn" id="setFromProgramBtn" ${activeSessionId && loadedProgram ? "" : "disabled"}>Set question (fra valgt item)</button>
-          <button class="btn" id="startFromProgramBtn" ${activeSessionId && loadedProgram ? "" : "disabled"}>Start (fra valgt item)</button>
-        </div>
-
-        <hr class="mt20">
-
-        <div class="mt10">
-          <strong>Eksport (agg-JSON)</strong><br>
-          Eksport tar kun aggregert data fra <span class="mono">rounds/*/agg/live</span> (aldri votes).
-        </div>
-        <div class="mt10 btnRow">
-          <button class="btn" id="exportBtn" ${activeSessionId ? "" : "disabled"}>Eksporter session (JSON)</button>
-        </div>
-      `;
-
-      // Wire handlers
-      const addDraftItemBtn = document.getElementById("addDraftItemBtn");
-      const clearDraftBtn = document.getElementById("clearDraftBtn");
-      const saveNewProgramBtn = document.getElementById("saveNewProgramBtn");
-      const refreshProgramsBtn = document.getElementById("refreshProgramsBtn");
-      const loadProgramBtn = document.getElementById("loadProgramBtn");
-      const attachProgramBtn = document.getElementById("attachProgramBtn");
-      const setFromProgramBtn = document.getElementById("setFromProgramBtn");
-      const startFromProgramBtn = document.getElementById("startFromProgramBtn");
-      const exportBtn = document.getElementById("exportBtn");
-
-      if (addDraftItemBtn) {
-        addDraftItemBtn.addEventListener("click", () => {
-          try {
-            const m = document.getElementById("modeSel") ? document.getElementById("modeSel").value : null;
-            if (!m) throw new Error("Mode ikke tilgjengelig (start session / vent på UI).");
-
-            const text = (document.getElementById("qText").value || "").trim();
-            let question = {};
-            if (text) question.text = text;
-
-            if (m === "multi") {
-              const rawChoices = document.getElementById("multiChoices").value;
-              question.choices = parseChoices(rawChoices);
-            }
-
-            // Stram form (matcher app.js normalize)
-            const item = { mode: m, question: question };
-            programDraftItems.push(item);
-            renderProgramsBox();
-            setStatus("La til item i draft (#" + programDraftItems.length + ").", "ok");
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Kunne ikke legge til i draft.", "err");
-            console.error(e);
-          }
-        });
-      }
-
-      if (clearDraftBtn) {
-        clearDraftBtn.addEventListener("click", () => {
-          programDraftItems = [];
-          renderProgramsBox();
-          setStatus("Draft tømt.", "ok");
-        });
-      }
-
-      if (saveNewProgramBtn) {
-        saveNewProgramBtn.addEventListener("click", async () => {
-          try {
-            setError("");
-            const title = (document.getElementById("progTitle").value || "").trim();
-            if (!programDraftItems.length) throw new Error("Draft er tom. Legg til minst 1 spørsmål.");
-
-            const res = await App.createProgram(title, programDraftItems);
-            setStatus("Program lagret: " + res.programId, "ok");
-            programDraftItems = [];
-            await refreshPrograms();
-            renderProgramsBox();
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Lagring av program feilet.", "err");
-            console.error(e);
-          }
-        });
-      }
-
-      if (refreshProgramsBtn) {
-        refreshProgramsBtn.addEventListener("click", async () => {
-          try {
-            await refreshPrograms();
-            renderProgramsBox();
-            setStatus("Programliste oppdatert.", "ok");
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Kunne ikke oppdatere programliste.", "err");
-            console.error(e);
-          }
-        });
-      }
-
-      if (loadProgramBtn) {
-        loadProgramBtn.addEventListener("click", async () => {
-          try {
-            setError("");
-            const sel = document.getElementById("programSel").value;
-            if (!sel) throw new Error("Velg et program først.");
-
-            loadedProgram = await App.getProgram(sel);
-            loadedProgramIndex = 0;
-            renderProgramsBox();
-            setStatus("Program lastet.", "ok");
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Kunne ikke laste program.", "err");
-            console.error(e);
-          }
-        });
-      }
-
-      if (attachProgramBtn) {
-        attachProgramBtn.addEventListener("click", async () => {
-          try {
-            setError("");
-            if (!activeSessionId) throw new Error("Ingen aktiv session.");
-            if (!loadedProgram) throw new Error("Last et program først.");
-
-            await App.setSessionProgramId(activeSessionId, loadedProgram.programId);
-            setStatus("Program koblet til aktiv session (programId oppdatert).", "ok");
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Kunne ikke koble program til session.", "err");
-            console.error(e);
-          }
-        });
-      }
-
-      if (setFromProgramBtn) {
-        setFromProgramBtn.addEventListener("click", async () => {
-          try {
-            setError("");
-            if (!activeSessionId) throw new Error("Ingen aktiv session.");
-            if (!loadedProgram) throw new Error("Ingen program lastet.");
-
-            const it = loadedProgram.items[loadedProgramIndex];
-            await App.setQuestionLease(activeSessionId, it.mode, it.question);
-            setStatus("Spørsmål satt fra program (#" + (loadedProgramIndex + 1) + ").", "ok");
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Set question fra program feilet.", "err");
-            console.error(e);
-          }
-        });
-      }
-
-      if (startFromProgramBtn) {
-        startFromProgramBtn.addEventListener("click", async () => {
-          try {
-            setError("");
-            if (!activeSessionId) throw new Error("Ingen aktiv session.");
-            if (!loadedProgram) throw new Error("Ingen program lastet.");
-
-            const it = loadedProgram.items[loadedProgramIndex];
-            const res = await App.startQuestionLease(activeSessionId, it.mode, it.question);
-            setStatus("Startet ny runde fra program: " + res.roundId, "ok");
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Start fra program feilet.", "err");
-            console.error(e);
-          }
-        });
-      }
-
-      if (exportBtn) {
-        exportBtn.addEventListener("click", async () => {
-          try {
-            setError("");
-            if (!activeSessionId) throw new Error("Ingen aktiv session.");
-
-            const data = await App.exportAggregatedJson(activeSessionId);
-
-            const sid = data && data.session && data.session.sessionId ? data.session.sessionId : activeSessionId;
-            const filename = "uv2_export_" + String(sid).slice(0, 8) + "_" + new Date().toISOString().slice(0, 19).replaceAll(":", "-") + ".json";
-            downloadJson(filename, data);
-            setStatus("Eksport lastet ned (agg).", "ok");
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Eksport feilet.", "err");
-            console.error(e);
-          }
-        });
-      }
-
-      // Delegert klikk for draft/program-lister
-      programsBox.querySelectorAll("button[data-act]").forEach(btn => {
-        btn.addEventListener("click", () => {
-          const act = btn.getAttribute("data-act");
-          const idx = Number(btn.getAttribute("data-idx"));
-          try {
-            if (!Number.isFinite(idx)) return;
-
-            if (act === "draftRemove") {
-              programDraftItems.splice(idx, 1);
-              renderProgramsBox();
-              return;
-            }
-
-            if (act === "draftLoad") {
-              const it = programDraftItems[idx];
-              loadItemIntoEditor(it);
-              setStatus("Draft item lastet til editor.", "ok");
-              return;
-            }
-
-            if (act === "progSelect") {
-              loadedProgramIndex = idx;
-              renderProgramsBox();
-              return;
-            }
-
-            if (act === "progLoadEditor") {
-              const it = loadedProgram.items[idx];
-              loadedProgramIndex = idx;
-              loadItemIntoEditor(it);
-              renderProgramsBox();
-              setStatus("Program item lastet til editor.", "ok");
-              return;
-            }
-          } catch (e) {
-            setError(e && e.message ? e.message : String(e));
-            setStatus("Handling feilet.", "err");
-            console.error(e);
-          }
-        });
-      });
-    }
-
-    function loadItemIntoEditor(item) {
-      if (!item) throw new Error("Mangler item.");
-      const modeSel = document.getElementById("modeSel");
-      const qTextEl = document.getElementById("qText");
-      if (!modeSel || !qTextEl) throw new Error("Editor ikke klar (vent på Controller UI).");
-
-      modeSel.value = item.mode;
-      const q = item.question || {};
-      qTextEl.value = q.text ? String(q.text) : "";
-
-      const multiBox = document.getElementById("multiBox");
-      if (multiBox) multiBox.style.display = (item.mode === "multi") ? "" : "none";
-
-      const choicesEl = document.getElementById("multiChoices");
-      if (choicesEl) {
-        if (item.mode === "multi" && Array.isArray(q.choices)) {
-          choicesEl.value = q.choices.map(c => `${c.id} | ${c.label}`).join("\n");
-        } else {
-          choicesEl.value = "yes | ja\nno | nei";
-        }
-      }
-    }
-
-    async function refreshPrograms() {
-      if (!currentUser) { programsCache = []; return; }
-      programsCache = await App.listProgramsForOwner();
-    }
-
-    // -------- Steg 6 Controller UI (uendret funksjonelt) --------
-
     function renderControls() {
       if (!activeSessionId) {
         controlsBox.innerHTML = `<strong>Controller UI</strong><br>Start/velg en aktiv session først.`;
@@ -691,7 +305,7 @@
           <textarea id="qText" class="inputArea" rows="2" placeholder="Skriv spørsmålet her...">${escapeHtml(qText)}</textarea>
         </div>
 
-        <div class="mt20" id="multiBox" style="${mode === "multi" ? "" : "display:none;"}">
+        <div class="mt20" id="multiBox">
           <label>Multi choices (én per linje): <span class="mono">id | label</span></label><br>
           <textarea id="multiChoices" class="inputArea" rows="5">${escapeHtml(multiChoices)}</textarea>
         </div>
@@ -714,13 +328,6 @@
       `;
 
       const modeSel = document.getElementById("modeSel");
-
-      // vis/skjul multibox ved mode-change (kun UI, ingen writes)
-      modeSel.addEventListener("change", () => {
-        const m = modeSel.value;
-        const multiBox = document.getElementById("multiBox");
-        if (multiBox) multiBox.style.display = (m === "multi") ? "" : "none";
-      });
 
       document.getElementById("setQuestionBtn").addEventListener("click", async () => {
         try {
@@ -833,7 +440,6 @@
           controlsBox.innerHTML = "";
           renderLease(null);
 
-          renderProgramsBox();
           setStatus("Session avsluttet.", "ok");
         } catch (err) {
           const msg = (err && err.message) ? err.message : String(err);
@@ -860,7 +466,6 @@
           lastState = data;
           renderLease(data);
           renderControls();
-          renderProgramsBox(); // kun render, ingen writes
         },
         (err) => {
           setError("Kunne ikke lese state/live: " + (err && err.message ? err.message : String(err)));
@@ -896,8 +501,6 @@
 
         renderSessionBox();
         attachStateListener(res.sessionId);
-        renderProgramsBox();
-
         setStatus("Ny session startet.", "ok");
       } catch (err) {
         const msg = (err && err.message) ? err.message : String(err);
@@ -908,27 +511,19 @@
     });
 
     App.auth.onAuthStateChanged(async (user) => {
-      currentUser = user || null;
       renderUser(user);
 
       if (!user) {
         activeSessionId = null;
         activeJoinCode = null;
         lastState = null;
-        loadedProgram = null;
-        loadedProgramIndex = 0;
-        programDraftItems = [];
-        programsCache = [];
-
         if (unsubscribe) unsubscribe();
         unsubscribe = null;
         if (leaseTicker) clearInterval(leaseTicker);
         leaseTicker = null;
-
         leaseBox.innerHTML = "";
         sessionBox.innerHTML = "";
         controlsBox.innerHTML = "";
-        programsBox.innerHTML = "";
         statusBox.innerHTML = "";
         setError("");
         return;
@@ -952,13 +547,9 @@
           renderControls();
           setStatus("Ingen aktiv session funnet.", "warn");
         }
-
-        await refreshPrograms();
-        renderProgramsBox();
-
       } catch (e) {
         setError(e && e.message ? e.message : String(e));
-        setStatus("Kunne ikke lese owner-peker / programmer.", "err");
+        setStatus("Kunne ikke lese owner-peker.", "err");
         console.error(e);
       }
     });
