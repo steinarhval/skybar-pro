@@ -38,4 +38,4 @@ jobs:
         run: npm install
 
       - name: Deploy Hosting and Functions
-        run: firebase deploy --only hosting,functions --force
+        run: firebase deploy --only hosting,functions,firestore:rules --force
