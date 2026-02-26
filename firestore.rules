@@ -17,7 +17,7 @@ service cloud.firestore {
     // --- Public: join routing (read only) ---
     match /joinCodes/{joinCode} {
       allow read: if isValidJoinCode(joinCode);
-      allow write: if isSignedIn(); // controller/admin only (kan strammes mer senere per ownerId)
+      allow write: if isSignedIn(); // controller/admin only (kan ballestrammes mer senere per ownerId)
     }
 
     // --- Owners (auth only) ---
@@ -71,3 +71,4 @@ service cloud.firestore {
     }
   }
 }
+
