@@ -121,13 +121,13 @@ programs/{programId}
 
 Felter:
 
-ownerId
-title
-content (spørsmål/struktur)
-visibility: "private" | "shared" | "library"
-createdAt
-updatedAt
-sourceProgramId (kan være null)
+- ownerId
+- title
+- content (spørsmål/struktur)
+- visibility: "private" | "shared" | "library"
+- createdAt
+- updatedAt
+- sourceProgramId (kan være null)
 
 Regler:
 
@@ -193,8 +193,6 @@ Hvis `saveResults = false`:
 Hvis `true`:
 - Data beholdes for eksport.
 
-Systemet skal primært lagre aggregert data.
-Rådata kan anonymiseres ved eksport.
 
 ---
 
@@ -257,4 +255,5 @@ Dette dokumentet er systemets fundament.
 Implementasjonsplaner kan endres.
 
 Grunnloven skal være stabil.
+
 
