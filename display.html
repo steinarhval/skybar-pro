@@ -92,8 +92,12 @@
       resultBox.innerHTML = "";
     }
 
+    function renderLoadingState() {
+      resultBox.innerHTML = `<strong>Display</strong><br>Laster <span class="mono">state/live</span>…`;
+    }
+
     function renderWaitingForRound() {
-      resultBox.innerHTML = `<strong>Resultat (MULTI)</strong><br>Venter på aktiv <span class="mono">roundId</span>…`;
+      resultBox.innerHTML = `<strong>Display</strong><br>State er lastet, men venter på aktiv <span class="mono">roundId</span>…`;
     }
 
     function renderWrongMode(mode) {
@@ -141,10 +145,9 @@
       const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
       const n = (agg && typeof agg.n === "number") ? agg.n : 0;
 
-      // Labeling basert på state.question (ingen summering, kun mapping)
+      // Labeling basert på state.question
       const labelMap = buildChoiceLabelMap(state.question);
 
-      // Hvis state har choices, vis dem i den rekkefølgen (og vis 0 hvis ikke finnes i agg)
       const qChoices = (state.question && Array.isArray(state.question.choices)) ? state.question.choices : [];
       const haveChoiceList = qChoices.length >= 2;
 
@@ -158,7 +161,6 @@
           return `<tr><td>${escapeHtml(label)}</td><td class="mono">${v}</td></tr>`;
         }).join("");
       } else {
-        // Fallback: vis kun det som finnes i agg (men fortsatt uten å "beregne" noe)
         const entries = Object.entries(counts);
         entries.sort((a, b) => (b[1] || 0) - (a[1] || 0));
         if (!entries.length) {
@@ -191,7 +193,6 @@
     }
 
     function render() {
-      // Én renderer som alltid bruker siste state+agg
       renderMultiFromStateAndAgg(lastState, lastAgg);
     }
 
@@ -226,7 +227,6 @@
         (state) => {
           lastState = state;
           renderState(state);
-
           setMsg("");
 
           if (!state) {
@@ -239,16 +239,14 @@
           const mode = state.mode || null;
           const roundId = state.roundId || null;
 
-          // Kun multi i dette steget
           if (mode && mode !== "multi") {
             currentRoundId = roundId || null;
             detachAgg();
             lastAgg = null;
-            render(); // viser "kun multi"-beskjed
+            render();
             return;
           }
 
-          // Håndter ny roundId (unsubscribe gammel + subscribe ny)
           if (!roundId) {
             currentRoundId = null;
             detachAgg();
@@ -261,7 +259,6 @@
             attachAgg(sessionId, roundId);
           }
 
-          // Hvis samme roundId: bare render (agg kommer via egen listener)
           render();
         },
         (err) => {
@@ -276,6 +273,16 @@
       joinCode = q.joinCode;
       sessionId = q.sessionId;
 
+      // Hvis display åpnes uten querystring, prøv lokal cache fra join/innhenting
+      if (!sessionId && !joinCode && App.getParticipantSession) {
+        try {
+          const saved = App.getParticipantSession();
+          if (saved && saved.joinCode) joinCode = String(saved.joinCode).toUpperCase().trim();
+          if (saved && saved.sessionId) sessionId = String(saved.sessionId).trim();
+        } catch { /* ignore */ }
+      }
+
+      // Hvis vi bare har joinCode: resolve -> sessionId
       if (!sessionId && joinCode) {
         try {
           const res = await App.resolveJoinCode(joinCode);
@@ -290,12 +297,12 @@
 
       if (!sessionId) {
         setMsg("Mangler sessionId. Åpne display med <span class=\"mono\">?joinCode=ABC123</span> eller <span class=\"mono\">?sessionId=...</span>.");
-        renderWaitingForRound();
+        renderLoadingState();
         return;
       }
 
+      renderLoadingState();
       attachState(sessionId);
-      renderWaitingForRound();
     }
 
     boot();
