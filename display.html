@@ -67,9 +67,9 @@
     function renderConnect() {
       connectBox.innerHTML = `
         <strong>Tilkobling</strong><br>
-        sessionId: <span class="mono">${sessionId || "-"}</span><br>
-        joinCode: <span class="mono">${joinCode || "-"}</span><br>
-        Tips: Åpne med <span class="mono">?joinCode=ABC123</span> eller <span class="mono">?sessionId=...</span>
+        sessionId: <span class="mono">${escapeHtml(sessionId || "-")}</span><br>
+        joinCode: <span class="mono">${escapeHtml(joinCode || "-")}</span><br>
+        Tips: Åpne display med <span class="mono">?joinCode=ABC123</span> eller <span class="mono">?sessionId=...</span>
       `;
     }
 
@@ -81,15 +81,27 @@
 
       stateBox.innerHTML = `
         <strong>State (live)</strong><br>
-        status: <span class="mono">${state.status ?? "-"}</span><br>
-        mode: <span class="mono">${state.mode ?? "-"}</span><br>
-        roundId: <span class="mono">${state.roundId ?? "-"}</span><br>
-        question: <pre class="pre">${safeJson(state.question)}</pre>
+        status: <span class="mono">${escapeHtml(state.status ?? "-")}</span><br>
+        mode: <span class="mono">${escapeHtml(state.mode ?? "-")}</span><br>
+        roundId: <span class="mono">${escapeHtml(state.roundId ?? "-")}</span><br>
+        question: <pre class="pre">${escapeHtml(safeJson(state.question))}</pre>
       `;
     }
 
     function clearResults() {
       resultBox.innerHTML = "";
+    }
+
+    function renderStandby() {
+      stateBox.innerHTML = "";
+      resultBox.innerHTML = `
+        <strong>Venter på oppstart</strong><br>
+        Denne skjermen er klar, men det er ingen aktiv kobling akkurat nå.<br><br>
+        Åpne display med:<br>
+        <span class="mono">display.html?joinCode=ABC123</span><br>
+        eller<br>
+        <span class="mono">display.html?sessionId=...</span>
+      `;
     }
 
     function renderLoadingState() {
@@ -141,11 +153,9 @@
         return;
       }
 
-      // Agg kan være null i starten (før første stemme)
       const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
       const n = (agg && typeof agg.n === "number") ? agg.n : 0;
 
-      // Labeling basert på state.question
       const labelMap = buildChoiceLabelMap(state.question);
 
       const qChoices = (state.question && Array.isArray(state.question.choices)) ? state.question.choices : [];
@@ -273,13 +283,13 @@
       joinCode = q.joinCode;
       sessionId = q.sessionId;
 
-      // Hvis display åpnes uten querystring, prøv lokal cache fra join/innhenting
-      if (!sessionId && !joinCode && App.getParticipantSession) {
-        try {
-          const saved = App.getParticipantSession();
-          if (saved && saved.joinCode) joinCode = String(saved.joinCode).toUpperCase().trim();
-          if (saved && saved.sessionId) sessionId = String(saved.sessionId).trim();
-        } catch { /* ignore */ }
+      renderConnect();
+
+      // Ingen parametre -> standby (ikke prøv deltaker-cache her)
+      if (!sessionId && !joinCode) {
+        setMsg("");
+        renderStandby();
+        return;
       }
 
       // Hvis vi bare har joinCode: resolve -> sessionId
@@ -287,17 +297,23 @@
         try {
           const res = await App.resolveJoinCode(joinCode);
           sessionId = res.sessionId;
+          renderConnect();
         } catch (e) {
           const m = e && e.message ? e.message : String(e);
-          setMsg("<strong>Kunne ikke resolve joinCode:</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
+          setMsg(
+            "<strong>Koden er ikke aktiv.</strong><br>" +
+            "Den kan være utløpt eller feil.<br><br>" +
+            "joinCode: <span class=\"mono\">" + escapeHtml(joinCode) + "</span><br>" +
+            "<span class=\"mono\">" + escapeHtml(m) + "</span>"
+          );
+          renderStandby();
+          return;
         }
       }
 
-      renderConnect();
-
       if (!sessionId) {
         setMsg("Mangler sessionId. Åpne display med <span class=\"mono\">?joinCode=ABC123</span> eller <span class=\"mono\">?sessionId=...</span>.");
-        renderLoadingState();
+        renderStandby();
         return;
       }
 
