@@ -223,13 +223,55 @@ listenLiveState: function (sessionId, onData, onError) {
       );
     },
 
-    listenAgg: function (sessionId, roundId, onData, onError) {
-      const ref = this.aggRef(sessionId, roundId);
-      return ref.onSnapshot(
-        (snap) => onData(snap.exists ? (snap.data() || {}) : null),
-        (err) => onError && onError(err)
-      );
-    },
+listenAgg: function (sessionId, roundId, onData, onError) {
+  const ref = this.aggLiveRef(sessionId, roundId);
+
+  const FIRST_SNAPSHOT_TIMEOUT_MS = 2500;
+  const MAX_REATTACH = 1;
+
+  let unsub = null;
+  let cancelled = false;
+  let gotFirst = false;
+  let attempts = 0;
+  let gen = 0;
+
+  function attach() {
+    const myGen = ++gen;
+    gotFirst = false;
+
+    try { if (unsub) unsub(); } catch { /* ignore */ }
+    unsub = null;
+
+    unsub = ref.onSnapshot(
+      (snap) => {
+        if (cancelled || myGen !== gen) return;
+        gotFirst = true;
+        onData(snap.exists ? (snap.data() || {}) : null);
+      },
+      (err) => {
+        if (cancelled || myGen !== gen) return;
+        if (onError) onError(err);
+      }
+    );
+
+    setTimeout(() => {
+      if (cancelled || myGen !== gen) return;
+      if (!gotFirst && attempts < MAX_REATTACH) {
+        attempts++;
+        attach();
+      }
+    }, FIRST_SNAPSHOT_TIMEOUT_MS);
+  }
+
+  attach();
+
+  return function () {
+    cancelled = true;
+    gen++;
+    try { if (unsub) unsub(); } catch { /* ignore */ }
+    unsub = null;
+  };
+},
 
     // ---- Submit vote ----
     submitVoteOnce: async function (sessionId, roundId, mode, value) {
@@ -469,3 +511,4 @@ listenLiveState: function (sessionId, onData, onError) {
 
 
 })();
+
