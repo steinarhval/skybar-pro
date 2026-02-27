@@ -172,16 +172,123 @@ Full styring av spørsmål og status.
 
 # Steg 7 – Programs og eksport
 
-## Leveranse
-- Lagring av undervisningsopplegg per owner
-- Mulighet for deling
-- Eksport av aggregert data
-- Respektere `saveResults`
+## Formål
+Gjøre undervisningsopplegg gjenbrukbare per foreleser, med kontrollert deling og eksport av aggregert data.
 
-## Test
-- Programmer lagres per bruker
-- Eksport gir korrekt datasett
-- Ingen personidentifiserbar lagring
+Steg 7 skal ikke endre eksisterende avstemningsmotor (Steg 0–6).
+Ingen nye modes, ingen design-endringer, ingen sideeffekter.
+
+---
+
+## Fase 7.1 – Datamodell (Programs)
+
+### Leveranse
+- Innføre `programs/{programId}` i henhold til ARCHITECTURE.md (punkt 4.5).
+- Program inneholder aldri personidentifiserbare data.
+- Ingen writes til `sessions/*` eller `state/live` i denne fasen.
+
+### Test (må være grønn før 7.2)
+- Kan opprette et program (eksplisitt handling).
+- Kan lese eget program.
+- Refresh gjør ingen writes.
+- `state/live` endres ikke som bieffekt.
+
+---
+
+## Fase 7.2 – Rules (RBAC for Programs)
+
+### Leveranse
+- Kun eier (ownerId) eller admin kan oppdatere/slette et program.
+- Deling gir kun lesetilgang (read-only) for andre.
+- Instruktør kan ikke skrive til andres programmer.
+
+### Test (må være grønn før 7.3)
+- Update/delete av andres program avvises av rules.
+- Read fungerer for shared/library uten at write er mulig.
+
+---
+
+## Fase 7.3 – Controller CRUD (program-lagring)
+
+### Leveranse
+- Lage nytt program (eksplisitt knapp/handling).
+- Lagre/oppdatere program (eksplisitt knapp/handling).
+- Slette eget program.
+- Liste programmer i controller:
+  - Egne (ownerId == meg)
+  - Shared (delt med meg, read-only)
+  - Library (felles bibliotek, read-only)
+
+### Test (må være grønn før 7.4)
+- Ingen auto-write ved refresh.
+- Ingen write uten eksplisitt handling.
+- Liste/åpne program er read-only.
+
+---
+
+## Fase 7.4 – Copy-to-own (Lag kopi)
+
+### Leveranse
+- Foreleser som kan lese et program (shared/library) kan lage kopi til egen konto.
+- Kopi opprettes som nytt program med:
+  - nytt programId
+  - ownerId = request.auth.uid (kopiens eier)
+  - visibility = "private" (default)
+  - sourceProgramId = originalens programId (skal støttes)
+- Kopi er uavhengig av original.
+
+### Test (må være grønn før 7.5)
+- Endringer i kopi påvirker ikke original.
+- Kopi kan redigeres av kopiens eier selv om original er read-only.
+
+---
+
+## Fase 7.5 – Koble program til aktiv session
+
+### Leveranse
+- Eksplisitt handling i controller: “Bruk i aktiv session”.
+- Oppdaterer kun `sessions/{sessionId}.programId`.
+- Kun session-eier (ownerId) eller admin kan sette `programId` for sessionen.
+- Handlingen skal ikke:
+  - endre `state/live`
+  - opprette rounds/votes/agg
+  - trigge auto-writes ved refresh
+
+### Test (må være grønn før 7.6)
+- `sessions/{sessionId}.programId` settes korrekt.
+- Ingen andre Firestore-writes skjer.
+- Refresh gjør ingen writes.
+
+---
+
+## Fase 7.6 – Eksport (kun aggregert JSON)
+
+### Standard (låst)
+- Hvis `saveResults = false` skal eksport ikke være mulig.
+
+### Leveranse
+- Eksport av aggregert data til JSON for en session, kun for session-eier/admin.
+- Eksport kan kun inkludere:
+  - `sessions/{sessionId}` relevante metadata
+  - `sessions/{sessionId}/rounds/{roundId}/agg/live` (aggregert)
+- Eksport skal aldri inkludere:
+  - `votes/*`
+  - personidentifiserbar data
+
+### Test (må være grønn før Steg 7 er ferdig)
+- Når `saveResults=false`: eksport er blokkert (UI deaktiverer/skjuler, og logikk håndhever).
+- Når `saveResults=true`: eksport genererer JSON som kun inneholder metadata + agg/live per round.
+- Ingen votes kan eksporteres eller leses som del av eksportflyten.
+
+---
+
+## Låseprinsipp for Steg 7
+- Hver fase (7.1–7.6) må være grønn før neste påbegynnes.
+- Ingen avvik fra ARCHITECTURE.md.
+- Ingen nye collections uten eksplisitt beslutning.
+- Ingen auto-writes ved refresh.
+- Ingen svar-data i state.
+- Eksport er kun aggregert.
 
 ---
 
@@ -197,4 +304,5 @@ Før neste steg påbegynnes:
 ---
 
 Dette dokumentet kan justeres ved behov.  
+
 ARCHITECTURE.md er systemets faste kontrakt.
