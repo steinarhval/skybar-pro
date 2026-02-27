@@ -76,7 +76,6 @@
 
   function normalizeQuestionForMode(mode, question) {
     // State skal ikke inneholde svar, kun styring. Vi lagrer bare det deltaker/visning trenger.
-    // Innhenting bruker question.choices for multi; ellers er question kun metadata.
     if (!question) return null;
 
     if (mode === "multi") {
@@ -92,7 +91,6 @@
       return { choices: norm, text: question.text != null ? String(question.text) : null };
     }
 
-    // likert/open/wordcloud: behold kun text + evt. fremtidige felt (men stramt)
     if (!isPlainObject(question)) throw new Error("question må være et objekt.");
     const out = {};
     if (question.text != null) out.text = String(question.text);
@@ -119,18 +117,11 @@
         .collection("votes").doc(clientId);
     },
 
-    // Standard agg (ny): sessions/{sid}/rounds/{rid}/agg/live
+    // ✅ Agg ref (riktig path): sessions/{sid}/rounds/{rid}/agg/live
     aggRef: function (sessionId, roundId) {
       return db.collection("sessions").doc(sessionId)
         .collection("rounds").doc(roundId)
         .collection("agg").doc("live");
-    },
-
-    // Legacy agg (gammel): sessions/{sid}/rounds/{rid}/agg  (doc)
-    legacyAggDocRef: function (sessionId, roundId) {
-      return db.collection("sessions").doc(sessionId)
-        .collection("rounds").doc(roundId)
-        .doc("agg");
     },
 
     // ---- Join routing (READ ONLY) ----
@@ -169,8 +160,6 @@
     listenLiveState: function (sessionId, onData, onError) {
       const ref = this.liveStateRef(sessionId);
 
-      // Watchdog: noen klienter får sporadisk aldri "første snapshot" etter reload.
-      // Vi re-attacher EN gang hvis første snapshot ikke kommer innen timeout.
       const FIRST_SNAPSHOT_TIMEOUT_MS = 2500;
       const MAX_REATTACH = 1;
 
@@ -184,7 +173,6 @@
         const myGen = ++gen;
         gotFirst = false;
 
-        // Defensive: rydd bort gammel listener før ny
         try { if (unsub) unsub(); } catch { /* ignore */ }
         unsub = null;
 
@@ -200,7 +188,6 @@
           }
         );
 
-        // Watchdog-timer: hvis ingen første callback kom, re-attach én gang.
         setTimeout(() => {
           if (cancelled || myGen !== gen) return;
           if (!gotFirst && attempts < MAX_REATTACH) {
@@ -212,10 +199,9 @@
 
       attach();
 
-      // Returner en unsubscribe som stopper både aktiv listener og watchdog-retry
       return function () {
         cancelled = true;
-        gen++; // invalidér pending timers
+        gen++;
         try { if (unsub) unsub(); } catch { /* ignore */ }
         unsub = null;
       };
@@ -229,61 +215,54 @@
       );
     },
 
-    // ✅ FIX: robust agg-listener (først agg/live, fallback til legacy agg-doc)
+    // ✅ FIX: bruk aggRef (som finnes) – ikke aggLiveRef (som ikke finnes)
     listenAgg: function (sessionId, roundId, onData, onError) {
-      const liveRef = this.aggRef(sessionId, roundId);
-      const legacyRef = this.legacyAggDocRef(sessionId, roundId);
+      const ref = this.aggRef(sessionId, roundId);
 
-      let unsubLive = null;
-      let unsubLegacy = null;
-      let decidedLive = false; // hvis live finnes, lås til live
+      const FIRST_SNAPSHOT_TIMEOUT_MS = 2500;
+      const MAX_REATTACH = 1;
 
-      function safeErr(err) {
-        if (onError) onError(err);
-      }
+      let unsub = null;
+      let cancelled = false;
+      let gotFirst = false;
+      let attempts = 0;
+      let gen = 0;
 
-      function attachLegacyOnce() {
-        if (unsubLegacy) return;
-        unsubLegacy = legacyRef.onSnapshot(
+      function attach() {
+        const myGen = ++gen;
+        gotFirst = false;
+
+        try { if (unsub) unsub(); } catch { /* ignore */ }
+        unsub = null;
+
+        unsub = ref.onSnapshot(
           (snap) => {
-            // Bare bruk legacy hvis vi ikke har "bestemt live"
-            if (decidedLive) return;
+            if (cancelled || myGen !== gen) return;
+            gotFirst = true;
             onData(snap.exists ? (snap.data() || {}) : null);
           },
-          safeErr
+          (err) => {
+            if (cancelled || myGen !== gen) return;
+            if (onError) onError(err);
+          }
         );
+
+        setTimeout(() => {
+          if (cancelled || myGen !== gen) return;
+          if (!gotFirst && attempts < MAX_REATTACH) {
+            attempts++;
+            attach();
+          }
+        }, FIRST_SNAPSHOT_TIMEOUT_MS);
       }
 
-      unsubLive = liveRef.onSnapshot(
-        (snap) => {
-          if (snap.exists) {
-            // Live er standard – når den finnes, bruker vi alltid den
-            decidedLive = true;
-
-            // slå av legacy for å unngå “duell”
-            if (unsubLegacy) { try { unsubLegacy(); } catch (_) { } }
-            unsubLegacy = null;
-
-            onData(snap.data() || {});
-            return;
-          }
-
-          // Live finnes ikke (ennå eller i legacy-runde): fallback til legacy
-          if (!decidedLive) {
-            attachLegacyOnce();
-          } else {
-            // hvis vi tidligere hadde live men den "forsvant", gi null
-            onData(null);
-          }
-        },
-        safeErr
-      );
+      attach();
 
       return function () {
-        try { if (unsubLive) unsubLive(); } catch { /* ignore */ }
-        try { if (unsubLegacy) unsubLegacy(); } catch { /* ignore */ }
-        unsubLive = null;
-        unsubLegacy = null;
+        cancelled = true;
+        gen++;
+        try { if (unsub) unsub(); } catch { /* ignore */ }
+        unsub = null;
       };
     },
 
@@ -427,7 +406,6 @@
         const untilMs = toMillisMaybe(cur.controllerLeaseUntil);
         const active = (untilMs !== null) ? (untilMs > nowMs()) : false;
 
-        // Ingen takeover i Steg 6
         if (active && curCid && curCid !== myControllerId) {
           throw new Error("Lease aktiv hos annen controller. Kan ikke skrive nå.");
         }
@@ -456,7 +434,6 @@
     setQuestionLease: async function (sessionId, mode, question) {
       assertAllowedMode(mode);
       const q = normalizeQuestionForMode(mode, question);
-      // Setter question/mode, men rører ikke roundId (ingen reset).
       await this.writeLiveStateWithLease(sessionId, { mode, question: q });
       return { mode };
     },
@@ -474,7 +451,6 @@
       return { roundId };
     },
 
-    // Fortsatt tilgjengelig (nå via startQuestionLease i UI, men greit å beholde)
     startMultiYesNo: async function (sessionId) {
       return await this.startQuestionLease(sessionId, "multi", {
         choices: [
