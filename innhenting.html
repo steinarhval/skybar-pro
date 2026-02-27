@@ -16,7 +16,7 @@
   <div id="msgBox" class="mt20"></div>
 
   <div class="mt20">
-    <button id="backBtn">Tilbake</button>
+    <button id="backBtn">Til join</button>
   </div>
 
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
@@ -256,7 +256,6 @@
           try {
             setMsg('<span class="mono">Tilkobling våknet litt skeivt – prøver igjen…</span>');
 
-            // Best effort: bounce nettverk
             if (App && App.db && typeof App.db.disableNetwork === "function") {
               try { await App.db.disableNetwork(); } catch (_) {}
             }
@@ -288,13 +287,6 @@
       } finally {
         isSubmitting = false;
       }
-    }
-
-    function detachAllListeners() {
-      if (unsubState) unsubState();
-      if (unsubLock) unsubLock();
-      unsubState = null;
-      unsubLock = null;
     }
 
     function attachLock(sessionId, roundId) {
@@ -356,7 +348,7 @@
       );
     }
 
-    // --- Wake-up reconnect (uten pageshow-loop) ---
+    // --- Wake-up reconnect ---
     async function enableNetworkBestEffort() {
       try {
         if (App && App.db && typeof App.db.enableNetwork === "function") {
@@ -369,17 +361,16 @@
       if (!bootDone) return;
       if (!currentSessionId) return;
       if (document.hidden) return;
-      if (isSubmitting) return; // viktig: ikke reconnect midt i vote
+      if (isSubmitting) return;
 
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(async () => {
         const now = Date.now();
-        if (now - lastReconnectAt < 2000) return; // rate limit
+        if (now - lastReconnectAt < 2000) return;
         lastReconnectAt = now;
 
         await enableNetworkBestEffort();
 
-        // Re-attach state (og lock hvis vi allerede har roundId)
         if (unsubState) { unsubState(); unsubState = null; }
         attachState(currentSessionId);
 
@@ -402,31 +393,48 @@
       return null;
     }
 
+    function redirectToJoin() {
+      window.location.replace("join.html");
+    }
+
     async function boot() {
       try {
         const urlJoin = parseQueryJoinCode();
 
-        if (urlJoin) {
-          const res = await App.resolveJoinCode(urlJoin);
-          currentSessionId = res.sessionId;
-          currentJoinCode = urlJoin;
-
-          App.setParticipantSession(currentSessionId, currentJoinCode);
-        } else {
-          const p = App.getParticipantSession();
-          if (p && p.sessionId && p.joinCode) {
-            currentSessionId = p.sessionId;
-            currentJoinCode = p.joinCode;
-          }
+        // HARD RULE: innhenting.html skal brukes med ?joinCode=
+        // Hvis ikke: send bruker til join.html (det er der de skal være).
+        if (!urlJoin) {
+          redirectToJoin();
+          return;
         }
 
-        if (!currentSessionId || !currentJoinCode) {
+        // Vi har joinCode i URL: resolve -> sessionId
+        currentJoinCode = urlJoin;
+
+        let res;
+        try {
+          res = await App.resolveJoinCode(currentJoinCode);
+        } catch (eResolve) {
+          const m = eResolve && eResolve.message ? String(eResolve.message) : String(eResolve);
+          currentSessionId = null;
           renderInfo();
-          setMsg('Mangler join-informasjon. Gå til <span class="mono">join.html</span> og skriv inn kode.');
+          stateBox.innerHTML = "";
           setVoteUIWaiting();
+          setMsg(
+            `<strong>Koden er ikke aktiv.</strong><br>
+             Den kan være utløpt eller feil.<br><br>
+             joinCode: <span class="mono">${escapeHtml(currentJoinCode)}</span><br>
+             <span class="mono">${escapeHtml(m)}</span><br><br>
+             Gå til <span class="mono">join.html</span> og skriv inn ny kode.`
+          );
           bootDone = true;
           return;
         }
+
+        currentSessionId = res.sessionId;
+
+        // Backup cache (ingen Firestore-writes)
+        App.setParticipantSession(currentSessionId, currentJoinCode);
 
         renderInfo();
         attachState(currentSessionId);
@@ -444,7 +452,7 @@
     }
 
     backBtn.addEventListener("click", () => {
-      window.location.href = "join.html";
+      redirectToJoin();
     });
 
     boot();
