@@ -159,13 +159,61 @@
     },
 
     // ---- Listen (read) ----
-    listenLiveState: function (sessionId, onData, onError) {
-      const ref = this.liveStateRef(sessionId);
-      return ref.onSnapshot(
-        (snap) => onData(snap.exists ? (snap.data() || {}) : null),
-        (err) => onError && onError(err)
-      );
-    },
+// ---- Listen (read) ----
+listenLiveState: function (sessionId, onData, onError) {
+  const ref = this.liveStateRef(sessionId);
+
+  // Watchdog: noen klienter får sporadisk aldri "første snapshot" etter reload.
+  // Vi re-attacher EN gang hvis første snapshot ikke kommer innen timeout.
+  const FIRST_SNAPSHOT_TIMEOUT_MS = 2500;
+  const MAX_REATTACH = 1;
+
+  let unsub = null;
+  let cancelled = false;
+  let gotFirst = false;
+  let attempts = 0;
+  let gen = 0;
+
+  function attach() {
+    const myGen = ++gen;
+    gotFirst = false;
+
+    // Defensive: rydd bort gammel listener før ny
+    try { if (unsub) unsub(); } catch { /* ignore */ }
+    unsub = null;
+
+    unsub = ref.onSnapshot(
+      (snap) => {
+        if (cancelled || myGen !== gen) return;
+        gotFirst = true;
+        onData(snap.exists ? (snap.data() || {}) : null);
+      },
+      (err) => {
+        if (cancelled || myGen !== gen) return;
+        if (onError) onError(err);
+      }
+    );
+
+    // Watchdog-timer: hvis ingen første callback kom, re-attach én gang.
+    setTimeout(() => {
+      if (cancelled || myGen !== gen) return;
+      if (!gotFirst && attempts < MAX_REATTACH) {
+        attempts++;
+        attach();
+      }
+    }, FIRST_SNAPSHOT_TIMEOUT_MS);
+  }
+
+  attach();
+
+  // Returner en unsubscribe som stopper både aktiv listener og watchdog-retry
+  return function () {
+    cancelled = true;
+    gen++; // invalidér pending timers
+    try { if (unsub) unsub(); } catch { /* ignore */ }
+    unsub = null;
+  };
+},
 
     listenVoteLock: function (sessionId, roundId, clientId, onData, onError) {
       const ref = this.roundVoteRef(sessionId, roundId, clientId);
@@ -418,5 +466,6 @@
   };
 
   if (auth) auth.onAuthStateChanged(() => { });
+
 
 })();
