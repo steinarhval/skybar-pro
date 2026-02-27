@@ -117,6 +117,28 @@ State-dokumentet finnes kun for aktiv session.
 
 ---
 
+4.5 Programs (undervisningsopplegg)
+programs/{programId}
+
+Felter:
+
+ownerId
+title
+content (spørsmål/struktur)
+visibility: "private" | "shared" | "library"
+createdAt
+updatedAt
+sourceProgramId (kan være null)
+
+Regler:
+
+Program inneholder aldri personidentifiserbare data.
+Kun eier (ownerId) eller admin kan endre/slette et program.
+Deling gir lesetilgang, ikke redigeringsrett.
+Kopi (copy-to-own) opprettes som nytt program med ny ownerId.
+
+---
+
 # 5. Roller og skrive-rettigheter
 
 - Controller kan skrive til state.
@@ -124,6 +146,8 @@ State-dokumentet finnes kun for aktiv session.
 - Deltaker kan aldri skrive til state.
 - Deltaker kan kun skrive til votes-path under session.
 - Controller kan kun skrive til state for aktiv session.
+- “Controller” betyr eier av aktiv session (ownerId).
+- Kun session-eier (ownerId) eller admin kan skrive til sessions/{sessionId} og state/live.
 
 ---
 
@@ -215,6 +239,7 @@ Historikk slettes ikke automatisk.
 - Ingen midlertidige hacks
 - Ingen automatisk skrivning ved refresh
 - Ingen implisitt sideeffekt mellom modus
+- Ingen eksport eller uthenting av votes-data (kun aggregert eksport er tillatt).
 
 ---
 
@@ -231,4 +256,5 @@ Endringer i denne filen skal:
 
 Dette dokumentet er systemets fundament.
 Implementasjonsplaner kan endres.
+
 Grunnloven skal være stabil.
