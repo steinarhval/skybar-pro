@@ -1,6 +1,9 @@
 (function () {
   "use strict";
 
+  // --- UV2 VERSION STAMP (read-only, no writes) ---
+  const VERSION_STAMP = "uv2-2026-03-02b";
+
   if (!window.firebase) throw new Error("Firebase SDK (compat) er ikke lastet.");
   if (!window.CONFIG || !CONFIG.firebaseConfig) throw new Error("CONFIG.firebaseConfig mangler (config.js).");
 
@@ -100,6 +103,9 @@
   window.App = {
     db,
     auth,
+
+    // --- VERSION exposed (read-only) ---
+    VERSION: VERSION_STAMP,
 
     getClientId: function () {
       return getOrCreateClientId();
@@ -215,7 +221,7 @@
       );
     },
 
-    // ✅ FIX: bruk aggRef (som finnes) – ikke aggLiveRef (som ikke finnes)
+    // ✅ Listen agg via aggRef
     listenAgg: function (sessionId, roundId, onData, onError) {
       const ref = this.aggRef(sessionId, roundId);
 
@@ -498,5 +504,8 @@
   };
 
   if (auth) auth.onAuthStateChanged(() => { });
+
+  // --- Console proof of loaded artifact ---
+  try { console.log("[UV2] App.VERSION =", VERSION_STAMP); } catch (_) {}
 
 })();
