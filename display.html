@@ -65,10 +65,12 @@
     }
 
     function renderConnect() {
+      const ver = (window.App && App.VERSION) ? String(App.VERSION) : "(ukjent)";
       connectBox.innerHTML = `
         <strong>Tilkobling</strong><br>
         sessionId: <span class="mono">${escapeHtml(sessionId || "-")}</span><br>
         joinCode: <span class="mono">${escapeHtml(joinCode || "-")}</span><br>
+        version: <span class="mono">${escapeHtml(ver)}</span><br>
         Tips: Åpne display med <span class="mono">?joinCode=ABC123</span> eller <span class="mono">?sessionId=...</span>
       `;
     }
@@ -220,6 +222,11 @@
         roundId,
         (agg) => {
           lastAgg = agg;
+
+          // Debug: bevis på om agg faktisk kommer inn til display
+          const existsLine = agg ? "agg: mottatt" : "agg: null (doc mangler/ikke synlig)";
+          setMsg('<span class="mono">' + escapeHtml(existsLine) + "</span>");
+
           render();
         },
         (err) => {
@@ -237,7 +244,11 @@
         (state) => {
           lastState = state;
           renderState(state);
-          setMsg("");
+
+          // Ikke overskriv agg-debug hvis agg allerede er mottatt,
+          // men nullstill feilmeldinger ellers.
+          // (Vi lar attachAgg selv skrive debuglinje ved snapshot.)
+          // setMsg("");
 
           if (!state) {
             currentRoundId = null;
@@ -325,3 +336,4 @@
   </script>
 </body>
 </html>
+
