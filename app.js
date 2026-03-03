@@ -1,9 +1,6 @@
 (function () {
   "use strict";
 
-  // --- UV2 VERSION STAMP (read-only, no writes) ---
-  const VERSION_STAMP = "uv2-2026-03-02b";
-
   if (!window.firebase) throw new Error("Firebase SDK (compat) er ikke lastet.");
   if (!window.CONFIG || !CONFIG.firebaseConfig) throw new Error("CONFIG.firebaseConfig mangler (config.js).");
 
@@ -103,9 +100,6 @@
   window.App = {
     db,
     auth,
-
-    // --- VERSION exposed (read-only) ---
-    VERSION: VERSION_STAMP,
 
     getClientId: function () {
       return getOrCreateClientId();
@@ -221,7 +215,6 @@
       );
     },
 
-    // ✅ Listen agg via aggRef
     listenAgg: function (sessionId, roundId, onData, onError) {
       const ref = this.aggRef(sessionId, roundId);
 
@@ -298,7 +291,7 @@
       return res;
     },
 
-    // ---- Controller/Session ----
+    // ---- Auth helpers ----
     ensureSignedInWithGoogle: async function () {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -309,6 +302,20 @@
       return res.user;
     },
 
+    signOut: async function () {
+      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
+      await this.auth.signOut();
+      return { ok: true };
+    },
+
+    endSessionAndSignOut: async function (sessionId) {
+      // eksplisitt handling: end session først, så sign out
+      await this.endSession(sessionId);
+      await this.signOut();
+      return { ok: true };
+    },
+
+    // ---- Controller/Session ----
     getActiveSessionInfo: async function (ownerId) {
       const snap = await this.ownerRef(ownerId).get();
       if (!snap.exists) return null;
@@ -488,6 +495,15 @@
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
+      // ✅ Proff "slutt": nullstill live state (styring, ingen svar)
+      batch.set(this.liveStateRef(sessionId), {
+        status: "idle",
+        mode: null,
+        roundId: null,
+        question: null,
+        controllerTs: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
       if (joinCode) {
         batch.set(this.joinCodeRef(String(joinCode).toUpperCase()), { active: false }, { merge: true });
       }
@@ -504,8 +520,5 @@
   };
 
   if (auth) auth.onAuthStateChanged(() => { });
-
-  // --- Console proof of loaded artifact ---
-  try { console.log("[UV2] App.VERSION =", VERSION_STAMP); } catch (_) {}
 
 })();
