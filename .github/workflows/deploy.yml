@@ -6,6 +6,7 @@
 # redeploy 6
 # redeploy 7
 # redeploy 7
+# redeploy 8
 name: Deploy to Firebase
  
 on:
