@@ -10,8 +10,13 @@
 <body>
   <h1>Kontrollpanel</h1>
 
-  <button id="loginBtn">Logg inn med Google</button>
-  <button id="startSessionBtn">Start ny session</button>
+  <!-- TOPP-KNAPPER -->
+  <div class="btnRow">
+    <button id="loginBtn">Logg inn med Google</button>
+    <button id="logoutEndBtn" disabled>Logg ut (og avslutt session)</button>
+    <button id="topEndSessionBtn" disabled>End session</button>
+    <button id="startSessionBtn" disabled>Start ny session</button>
+  </div>
 
   <div id="controlsBox" class="mt20"></div>
 
@@ -31,8 +36,11 @@
 
   <script>
     const loginBtn = document.getElementById("loginBtn");
-    const userBox = document.getElementById("userBox");
+    const logoutEndBtn = document.getElementById("logoutEndBtn");
+    const topEndSessionBtn = document.getElementById("topEndSessionBtn");
     const startSessionBtn = document.getElementById("startSessionBtn");
+
+    const userBox = document.getElementById("userBox");
     const sessionBox = document.getElementById("sessionBox");
     const leaseBox = document.getElementById("leaseBox");
     const statusBox = document.getElementById("statusBox");
@@ -82,6 +90,31 @@
       statusTimer = setTimeout(() => {
         statusBox.innerHTML = "";
       }, 3500);
+    }
+
+    function setTopButtonsEnabled(isAuthed) {
+      // Start ny session krever auth
+      startSessionBtn.disabled = !isAuthed;
+
+      // End session / logout+end krever auth, og gir mening selv uten aktiv session (da gjør vi bare signOut)
+      topEndSessionBtn.disabled = !isAuthed;
+      logoutEndBtn.disabled = !isAuthed;
+    }
+
+    function teardownSessionUi() {
+      activeSessionId = null;
+      activeJoinCode = null;
+      lastState = null;
+
+      if (unsubscribe) unsubscribe();
+      unsubscribe = null;
+
+      if (leaseTicker) clearInterval(leaseTicker);
+      leaseTicker = null;
+
+      sessionBox.innerHTML = "";
+      controlsBox.innerHTML = "";
+      leaseBox.innerHTML = "";
     }
 
     function renderUser(user) {
@@ -174,7 +207,6 @@
     }
 
     function openInNewTab(url) {
-      // noopener for sikkerhet – og for å slippe at popup får kontroll på window.opener
       window.open(url, "_blank", "noopener");
     }
 
@@ -187,7 +219,6 @@
         return;
       }
 
-      // fallback
       const ta = document.createElement("textarea");
       ta.value = t;
       ta.style.position = "fixed";
@@ -430,14 +461,8 @@
 
           await App.endSession(activeSessionId);
 
-          activeSessionId = null;
-          activeJoinCode = null;
-          lastState = null;
-          if (unsubscribe) unsubscribe();
-          unsubscribe = null;
-
+          teardownSessionUi();
           sessionBox.innerHTML = `<strong>Session avsluttet.</strong>`;
-          controlsBox.innerHTML = "";
           renderLease(null);
 
           setStatus("Session avsluttet.", "ok");
@@ -490,6 +515,56 @@
       }
     });
 
+    // TOPP: End session (fortsett innlogget)
+    topEndSessionBtn.addEventListener("click", async () => {
+      try {
+        setError("");
+        setStatus("", "info");
+
+        if (!activeSessionId) {
+          setStatus("Ingen aktiv session å avslutte.", "warn");
+          return;
+        }
+
+        await App.endSession(activeSessionId);
+
+        teardownSessionUi();
+        sessionBox.innerHTML = `<strong>Session avsluttet.</strong>`;
+        renderLease(null);
+
+        setStatus("Session avsluttet.", "ok");
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : String(err);
+        setError(msg);
+        setStatus("End session feilet.", "err");
+        console.error(err);
+      }
+    });
+
+    // TOPP: Logg ut + end session (én knapp)
+    logoutEndBtn.addEventListener("click", async () => {
+      try {
+        setError("");
+        setStatus("", "info");
+
+        if (activeSessionId) {
+          await App.endSessionAndSignOut(activeSessionId);
+        } else {
+          // Ingen aktiv session -> bare logg ut
+          await App.signOut();
+        }
+
+        // onAuthStateChanged rydder resten, men vi kan være ekstra tydelige
+        teardownSessionUi();
+        setStatus("Logget ut.", "ok");
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : String(err);
+        setError(msg);
+        setStatus("Logg ut feilet.", "err");
+        console.error(err);
+      }
+    });
+
     startSessionBtn.addEventListener("click", async () => {
       try {
         setError("");
@@ -512,18 +587,10 @@
 
     App.auth.onAuthStateChanged(async (user) => {
       renderUser(user);
+      setTopButtonsEnabled(!!user);
 
       if (!user) {
-        activeSessionId = null;
-        activeJoinCode = null;
-        lastState = null;
-        if (unsubscribe) unsubscribe();
-        unsubscribe = null;
-        if (leaseTicker) clearInterval(leaseTicker);
-        leaseTicker = null;
-        leaseBox.innerHTML = "";
-        sessionBox.innerHTML = "";
-        controlsBox.innerHTML = "";
+        teardownSessionUi();
         statusBox.innerHTML = "";
         setError("");
         return;
