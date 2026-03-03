@@ -20,6 +20,9 @@
 
   <div id="controlsBox" class="mt20"></div>
 
+  <!-- Steg 7.3: Programmer -->
+  <div id="programsBox" class="mt20"></div>
+
   <div id="sessionBox" class="mt20"></div>
   <div id="leaseBox" class="mt20"></div>
   <div id="statusBox" class="mt20"></div>
@@ -46,6 +49,7 @@
     const statusBox = document.getElementById("statusBox");
     const errorBox = document.getElementById("errorBox");
     const controlsBox = document.getElementById("controlsBox");
+    const programsBox = document.getElementById("programsBox");
 
     let activeSessionId = null;
     let activeJoinCode = null;
@@ -53,6 +57,10 @@
     let unsubscribe = null;
     let leaseTicker = null;
     let lastState = null;
+
+    // --- Steg 7.3 state ---
+    let myPrograms = [];
+    let currentProgramId = null;
 
     function escapeHtml(s) {
       return String(s)
@@ -115,6 +123,12 @@
       sessionBox.innerHTML = "";
       controlsBox.innerHTML = "";
       leaseBox.innerHTML = "";
+    }
+
+    function teardownProgramsUi() {
+      myPrograms = [];
+      currentProgramId = null;
+      programsBox.innerHTML = "";
     }
 
     function renderUser(user) {
@@ -475,6 +489,214 @@
       });
     }
 
+    // --- Steg 7.3 UI ---
+    function prettyJson(obj) {
+      try { return JSON.stringify(obj, null, 2); } catch { return "{}"; }
+    }
+
+    function parseContentJson(raw) {
+      const t = String(raw || "").trim();
+      if (!t) return {};
+      try {
+        const v = JSON.parse(t);
+        if (v && typeof v === "object" && !Array.isArray(v)) return v;
+        // Content må være map i rules -> pakk annet inn
+        return { value: v };
+      } catch {
+        // Content må være map i rules -> pakk tekst inn
+        return { text: t };
+      }
+    }
+
+    async function refreshMyPrograms() {
+      if (!App.auth || !App.auth.currentUser) {
+        myPrograms = [];
+        currentProgramId = null;
+        renderPrograms();
+        return;
+      }
+
+      const list = await App.listMyPrograms();
+      myPrograms = list;
+      // behold currentProgramId hvis den fortsatt finnes
+      if (currentProgramId && !myPrograms.some(p => p.programId === currentProgramId)) {
+        currentProgramId = null;
+      }
+      renderPrograms();
+    }
+
+    function renderPrograms() {
+      const isAuthed = !!(App.auth && App.auth.currentUser);
+
+      const rows = myPrograms.map(p => {
+        const d = p.data || {};
+        const title = d.title || "(uten tittel)";
+        const vis = d.visibility || "private";
+        const mark = (p.programId === currentProgramId) ? " <strong>(valgt)</strong>" : "";
+        return `
+          <div class="mt10">
+            <button class="btn" data-pid="${escapeHtml(p.programId)}">Åpne</button>
+            <span class="mono">${escapeHtml(p.programId)}</span> – ${escapeHtml(title)} [${escapeHtml(vis)}]${mark}
+          </div>
+        `;
+      }).join("");
+
+      const current = currentProgramId
+        ? myPrograms.find(x => x.programId === currentProgramId)
+        : null;
+
+      const curData = current ? (current.data || {}) : null;
+
+      const titleVal = curData && curData.title ? String(curData.title) : "";
+      const visVal = curData && curData.visibility ? String(curData.visibility) : "private";
+      const srcVal = (curData && Object.prototype.hasOwnProperty.call(curData, "sourceProgramId")) ? (curData.sourceProgramId || "") : "";
+      const contentVal = curData && curData.content ? prettyJson(curData.content) : "{}";
+
+      programsBox.innerHTML = `
+        <strong>Programmer (Steg 7.3)</strong><br>
+        <div class="mt10 btnRow">
+          <button class="btn" id="createProgramBtn" ${isAuthed ? "" : "disabled"}>Opprett nytt program</button>
+          <button class="btn" id="refreshProgramsBtn" ${isAuthed ? "" : "disabled"}>Oppdater liste</button>
+        </div>
+
+        <div class="mt20">
+          <strong>Mine programmer</strong><br>
+          ${rows || "<div class='mt10'>(ingen ennå)</div>"}
+        </div>
+
+        <div class="mt20">
+          <strong>Rediger valgt program</strong><br>
+          programId: <span class="mono">${escapeHtml(currentProgramId || "-")}</span><br><br>
+
+          <label>Tittel:</label><br>
+          <input id="progTitle" class="inputWide" value="${escapeHtml(titleVal)}" ${currentProgramId ? "" : "disabled"} /><br><br>
+
+          <label>Visibility:</label><br>
+          <select id="progVis" class="inputWide" ${currentProgramId ? "" : "disabled"}>
+            <option value="private" ${visVal === "private" ? "selected" : ""}>private</option>
+            <option value="shared" ${visVal === "shared" ? "selected" : ""}>shared</option>
+            <option value="library" ${visVal === "library" ? "selected" : ""}>library</option>
+          </select><br><br>
+
+          <label>sourceProgramId (valgfri):</label><br>
+          <input id="progSource" class="inputWide" value="${escapeHtml(srcVal)}" ${currentProgramId ? "" : "disabled"} /><br><br>
+
+          <label>content (JSON – lagres som map):</label><br>
+          <textarea id="progContent" class="inputArea" rows="8" ${currentProgramId ? "" : "disabled"}>${escapeHtml(contentVal)}</textarea>
+
+          <div class="mt20 btnRow">
+            <button class="btn" id="saveProgramBtn" ${currentProgramId ? "" : "disabled"}>Lagre/oppdatere program</button>
+            <button class="btn" id="deleteProgramBtn" ${currentProgramId ? "" : "disabled"}>Slette program</button>
+          </div>
+        </div>
+      `;
+
+      const createBtn = document.getElementById("createProgramBtn");
+      const refreshBtn = document.getElementById("refreshProgramsBtn");
+
+      if (createBtn) {
+        createBtn.addEventListener("click", async () => {
+          try {
+            setError("");
+            setStatus("", "info");
+
+            const res = await App.createProgram({ title: "Nytt program", visibility: "private", content: {} });
+            currentProgramId = res.programId;
+
+            await refreshMyPrograms();
+            setStatus("Opprettet nytt program.", "ok");
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            setError(msg);
+            setStatus("Kunne ikke opprette program.", "err");
+            console.error(e);
+          }
+        });
+      }
+
+      if (refreshBtn) {
+        refreshBtn.addEventListener("click", async () => {
+          try {
+            setError("");
+            setStatus("", "info");
+            await refreshMyPrograms();
+            setStatus("Programliste oppdatert.", "ok");
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            setError(msg);
+            setStatus("Kunne ikke oppdatere programliste.", "err");
+            console.error(e);
+          }
+        });
+      }
+
+      // Åpne program
+      programsBox.querySelectorAll("button[data-pid]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          currentProgramId = btn.getAttribute("data-pid");
+          renderPrograms();
+          setStatus("Program åpnet.", "ok");
+        });
+      });
+
+      const saveBtn = document.getElementById("saveProgramBtn");
+      if (saveBtn) {
+        saveBtn.addEventListener("click", async () => {
+          try {
+            setError("");
+            setStatus("", "info");
+
+            if (!currentProgramId) throw new Error("Ingen program valgt.");
+
+            const title = (document.getElementById("progTitle").value || "").trim();
+            const visibility = document.getElementById("progVis").value;
+            const sourceProgramIdRaw = (document.getElementById("progSource").value || "").trim();
+            const contentRaw = document.getElementById("progContent").value;
+
+            const content = parseContentJson(contentRaw);
+            const sourceProgramId = sourceProgramIdRaw ? sourceProgramIdRaw : null;
+
+            await App.saveProgram(currentProgramId, { title, visibility, content, sourceProgramId });
+
+            await refreshMyPrograms();
+            setStatus("Program lagret.", "ok");
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            setError(msg);
+            setStatus("Kunne ikke lagre program.", "err");
+            console.error(e);
+          }
+        });
+      }
+
+      const delBtn = document.getElementById("deleteProgramBtn");
+      if (delBtn) {
+        delBtn.addEventListener("click", async () => {
+          try {
+            setError("");
+            setStatus("", "info");
+
+            if (!currentProgramId) throw new Error("Ingen program valgt.");
+
+            // Minimal, men eksplisitt: confirm
+            const ok = window.confirm("Slette program " + currentProgramId + "?");
+            if (!ok) return;
+
+            await App.deleteProgram(currentProgramId);
+            currentProgramId = null;
+
+            await refreshMyPrograms();
+            setStatus("Program slettet.", "ok");
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            setError(msg);
+            setStatus("Kunne ikke slette program.", "err");
+            console.error(e);
+          }
+        });
+      }
+    }
+
     function startLeaseTicker() {
       if (leaseTicker) clearInterval(leaseTicker);
       leaseTicker = setInterval(() => {
@@ -556,6 +778,7 @@
 
         // onAuthStateChanged rydder resten, men vi kan være ekstra tydelige
         teardownSessionUi();
+        teardownProgramsUi();
         setStatus("Logget ut.", "ok");
       } catch (err) {
         const msg = (err && err.message) ? err.message : String(err);
@@ -591,9 +814,19 @@
 
       if (!user) {
         teardownSessionUi();
+        teardownProgramsUi();
         statusBox.innerHTML = "";
         setError("");
         return;
+      }
+
+      // Steg 7.3: reads only (ingen writes)
+      try {
+        await refreshMyPrograms();
+      } catch (e) {
+        setError(e && e.message ? e.message : String(e));
+        setStatus("Kunne ikke laste programliste.", "err");
+        console.error(e);
       }
 
       try {
