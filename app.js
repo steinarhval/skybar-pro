@@ -17,8 +17,6 @@
   const ALLOWED_MODES = new Set(["multi", "likert", "open", "wordcloud"]);
   const ALLOWED_STATUSES = new Set(["idle", "collect", "results", "paused"]); // Grunnlov
 
-  const ALLOWED_PROGRAM_VISIBILITY = new Set(["private", "shared", "library"]);
-
   function getOrCreateClientId() {
     let id = localStorage.getItem(CLIENT_ID_KEY);
     if (id && typeof id === "string" && id.length >= 8) return id;
@@ -56,12 +54,6 @@
   function assertAllowedStatus(status) {
     if (!ALLOWED_STATUSES.has(status)) {
       throw new Error('Ugyldig status. Tillatt: "idle", "collect", "results", "paused".');
-    }
-  }
-
-  function assertProgramVisibility(vis) {
-    if (!ALLOWED_PROGRAM_VISIBILITY.has(vis)) {
-      throw new Error('Ugyldig visibility. Tillatt: "private", "shared", "library".');
     }
   }
 
@@ -130,92 +122,6 @@
       return db.collection("sessions").doc(sessionId)
         .collection("rounds").doc(roundId)
         .collection("agg").doc("live");
-    },
-
-    // ---- Steg 7.1/7.3: Programs ----
-    programRef: function (programId) {
-      return db.collection("programs").doc(programId);
-    },
-
-    listMyPrograms: async function () {
-      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
-      const user = this.auth.currentUser;
-      if (!user) throw new Error("Ikke innlogget.");
-
-      const snap = await db.collection("programs")
-        .where("ownerId", "==", user.uid)
-        .orderBy("updatedAt", "desc")
-        .limit(100)
-        .get();
-
-      const out = [];
-      snap.forEach((doc) => out.push({ programId: doc.id, data: doc.data() || {} }));
-      return out;
-    },
-
-    createProgram: async function (payload) {
-      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
-      const user = this.auth.currentUser;
-      if (!user) throw new Error("Ikke innlogget.");
-
-      const ownerId = user.uid;
-      const title = (payload && payload.title != null) ? String(payload.title).trim() : "Nytt program";
-      const visibility = (payload && payload.visibility) ? String(payload.visibility) : "private";
-      assertProgramVisibility(visibility);
-
-      const content = (payload && payload.content && isPlainObject(payload.content)) ? payload.content : {};
-
-      const ref = db.collection("programs").doc();
-      const now = firebase.firestore.FieldValue.serverTimestamp();
-
-      await ref.set({
-        ownerId,
-        title: title || "Nytt program",
-        content,
-        visibility,
-        createdAt: now,
-        updatedAt: now,
-        sourceProgramId: (payload && Object.prototype.hasOwnProperty.call(payload, "sourceProgramId")) ? (payload.sourceProgramId || null) : null
-      }, { merge: false });
-
-      return { programId: ref.id };
-    },
-
-    saveProgram: async function (programId, payload) {
-      if (!programId) throw new Error("Mangler programId.");
-      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
-      const user = this.auth.currentUser;
-      if (!user) throw new Error("Ikke innlogget.");
-
-      const title = (payload && payload.title != null) ? String(payload.title).trim() : "";
-      if (!title) throw new Error("Tittel kan ikke være tom.");
-
-      const visibility = (payload && payload.visibility) ? String(payload.visibility) : "private";
-      assertProgramVisibility(visibility);
-
-      const content = (payload && payload.content && isPlainObject(payload.content)) ? payload.content : {};
-      const sourceProgramId = (payload && Object.prototype.hasOwnProperty.call(payload, "sourceProgramId")) ? (payload.sourceProgramId || null) : null;
-
-      await this.programRef(programId).set({
-        // ownerId må ligge fast i rules (kan ikke endres), så vi setter det ikke her
-        title,
-        visibility,
-        content,
-        sourceProgramId,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-
-      return { ok: true };
-    },
-
-    deleteProgram: async function (programId) {
-      if (!programId) throw new Error("Mangler programId.");
-      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
-      const user = this.auth.currentUser;
-      if (!user) throw new Error("Ikke innlogget.");
-
-      await this.programRef(programId).delete();
-      return { ok: true };
     },
 
     // ---- Join routing (READ ONLY) ----
@@ -309,6 +215,7 @@
       );
     },
 
+    // ✅ FIX: bruk aggRef (som finnes) – ikke aggLiveRef (som ikke finnes)
     listenAgg: function (sessionId, roundId, onData, onError) {
       const ref = this.aggRef(sessionId, roundId);
 
@@ -385,7 +292,7 @@
       return res;
     },
 
-    // ---- Auth helpers ----
+    // ---- Controller/Session ----
     ensureSignedInWithGoogle: async function () {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
@@ -396,20 +303,6 @@
       return res.user;
     },
 
-    signOut: async function () {
-      if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
-      await this.auth.signOut();
-      return { ok: true };
-    },
-
-    endSessionAndSignOut: async function (sessionId) {
-      // eksplisitt handling: end session først, så sign out
-      await this.endSession(sessionId);
-      await this.signOut();
-      return { ok: true };
-    },
-
-    // ---- Controller/Session ----
     getActiveSessionInfo: async function (ownerId) {
       const snap = await this.ownerRef(ownerId).get();
       if (!snap.exists) return null;
@@ -587,15 +480,6 @@
         status: "ended",
         endedAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-
-      // ✅ Proff "slutt": nullstill live state (styring, ingen svar)
-      batch.set(this.liveStateRef(sessionId), {
-        status: "idle",
-        mode: null,
-        roundId: null,
-        question: null,
-        controllerTs: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
       if (joinCode) {

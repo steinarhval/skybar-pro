@@ -1,4 +1,4 @@
-rules_version = '2'; 
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -13,67 +13,6 @@ service cloud.firestore {
     function isString(x) { return x is string; }
     function isNumber(x) { return x is number; }
     function isMap(x) { return x is map; }
-    function isTimestamp(x) { return x is timestamp; }
-
-    // ---- Steg 7.2: Programs (RBAC) ----
-    match /programs/{programId} {
-
-      // Read for owner OR if shared/library
-      allow get, list: if
-        (
-          isSignedIn() &&
-          resource != null &&
-          resource.data.ownerId == request.auth.uid
-        )
-        || (
-          resource != null &&
-          (resource.data.visibility == "shared" || resource.data.visibility == "library")
-        );
-
-      // Create: only owner writes own docs
-      allow create: if isSignedIn()
-        && isMap(request.resource.data)
-        && request.resource.data.keys().hasOnly([
-          "ownerId", "title", "content", "visibility", "createdAt", "updatedAt", "sourceProgramId"
-        ])
-        && request.resource.data.ownerId == request.auth.uid
-        && isString(request.resource.data.title)
-        && request.resource.data.title.size() > 0
-        && isMap(request.resource.data.content)
-        && (request.resource.data.visibility == "private"
-            || request.resource.data.visibility == "shared"
-            || request.resource.data.visibility == "library")
-        && isTimestamp(request.resource.data.createdAt)
-        && isTimestamp(request.resource.data.updatedAt)
-        && (
-          request.resource.data.sourceProgramId == null
-          || isString(request.resource.data.sourceProgramId)
-        );
-
-      // Update: only owner, and ownerId cannot change
-      allow update: if isSignedIn()
-        && resource.data.ownerId == request.auth.uid
-        && request.resource.data.ownerId == resource.data.ownerId
-        && isMap(request.resource.data)
-        && request.resource.data.keys().hasOnly([
-          "ownerId", "title", "content", "visibility", "createdAt", "updatedAt", "sourceProgramId"
-        ])
-        && isString(request.resource.data.title)
-        && request.resource.data.title.size() > 0
-        && isMap(request.resource.data.content)
-        && (request.resource.data.visibility == "private"
-            || request.resource.data.visibility == "shared"
-            || request.resource.data.visibility == "library")
-        && isTimestamp(request.resource.data.createdAt)
-        && isTimestamp(request.resource.data.updatedAt)
-        && (
-          request.resource.data.sourceProgramId == null
-          || isString(request.resource.data.sourceProgramId)
-        );
-
-      // Delete: only owner
-      allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-    }
 
     // --- Public: join routing (read only) ---
     match /joinCodes/{joinCode} {
@@ -132,3 +71,4 @@ service cloud.firestore {
     }
   }
 }
+

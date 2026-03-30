@@ -103,11 +103,6 @@
       voteBox.innerHTML = `<strong>Stemme</strong><br><span class="mono">Du har allerede stemt i denne runden (låst).</span>`;
     }
 
-    // ✅ NYTT: “proff slutt”
-    function setVoteUIEnded() {
-      voteBox.innerHTML = `<strong>Stemme</strong><br><span class="mono">Sesjonen er avsluttet.</span>`;
-    }
-
     function renderMulti(choices) {
       const buttons = choices.map((c, idx) => {
         const label = (c && (c.label || c.text)) ? (c.label || c.text) : ("Valg " + (idx + 1));
@@ -189,17 +184,6 @@
     }
 
     function renderVoteUI() {
-      // ✅ NYTT: hvis sesjonen er “avsluttet” i state/live, vis det tydelig
-      // (konvensjon: endSession nuller til status idle + roundId null)
-      const sessionEnded = (!currentRoundId) && (currentMode == null);
-      // Vi bruker også status i state, men vi har den ikke lagret globalt her – så vi baserer oss på nullstilling.
-      // (Det er robust nok siden endSession setter mode/roundId/question til null.)
-
-      if (sessionEnded) {
-        setVoteUIEnded();
-        return;
-      }
-
       if (!currentRoundId || !currentMode) {
         lockState = currentRoundId ? lockState : "none";
         setVoteUIWaiting();
@@ -418,6 +402,7 @@
         const urlJoin = parseQueryJoinCode();
 
         // HARD RULE: innhenting.html skal brukes med ?joinCode=
+        // Hvis ikke: send bruker til join.html (det er der de skal være).
         if (!urlJoin) {
           redirectToJoin();
           return;
