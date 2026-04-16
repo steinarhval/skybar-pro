@@ -5,6 +5,76 @@
   <title>Display</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="app.css" />
+  <style>
+    .qrDock {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 10px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+      max-width: 180px;
+      z-index: 50;
+    }
+
+    .qrDock.hidden {
+      display: none;
+    }
+
+    .qrTitle {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .qrText {
+      font-size: 12px;
+      margin-top: 8px;
+      line-height: 1.3;
+    }
+
+    .qrCodeText {
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+
+    #qrBox {
+      width: 140px;
+      min-height: 140px;
+    }
+
+    #qrBox img,
+    #qrBox canvas {
+      display: block;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 700px) {
+      .qrDock {
+        right: 10px;
+        bottom: 10px;
+        padding: 8px;
+        max-width: 150px;
+      }
+
+      #qrBox {
+        width: 120px;
+        min-height: 120px;
+      }
+
+      .qrTitle {
+        font-size: 12px;
+      }
+
+      .qrText,
+      .qrCodeText {
+        font-size: 11px;
+      }
+    }
+  </style>
 </head>
 
 <body>
@@ -15,9 +85,20 @@
   <div id="resultBox" class="mt20"></div>
   <div id="msgBox" class="mt20"></div>
 
+  <div id="qrDock" class="qrDock hidden" aria-live="polite">
+    <div class="qrTitle">Scan for å delta</div>
+    <div id="qrBox"></div>
+    <div class="qrCodeText mono" id="qrCodeText"></div>
+    <div class="qrText">Mobilen går rett til innhenting.</div>
+  </div>
+
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <!-- Lite QR-bibliotek -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
   <script src="config.js"></script>
   <script src="app.js"></script>
 
@@ -27,6 +108,10 @@
     const resultBox = document.getElementById("resultBox");
     const msgBox = document.getElementById("msgBox");
 
+    const qrDock = document.getElementById("qrDock");
+    const qrBox = document.getElementById("qrBox");
+    const qrCodeText = document.getElementById("qrCodeText");
+
     let unsubState = null;
     let unsubAgg = null;
 
@@ -35,8 +120,11 @@
 
     let currentRoundId = null;
 
-    let lastState = null; // { status, mode, roundId, question }
-    let lastAgg = null;   // agg/live
+    let lastState = null;
+    let lastAgg = null;
+
+    let qrInstance = null;
+    let lastQrUrl = null;
 
     function setMsg(html) {
       msgBox.innerHTML = html || "";
@@ -61,6 +149,48 @@
         sessionId: s && s.trim() ? s.trim() : null,
         joinCode: j && j.trim() ? j.trim().toUpperCase().trim() : null
       };
+    }
+
+    function buildParticipantUrl(code) {
+      const u = new URL("innhenting.html", window.location.href);
+      u.searchParams.set("joinCode", String(code).toUpperCase());
+      return u.toString();
+    }
+
+    function clearQr() {
+      qrBox.innerHTML = "";
+      qrCodeText.textContent = "";
+      qrDock.classList.add("hidden");
+      qrInstance = null;
+      lastQrUrl = null;
+    }
+
+    function renderQr() {
+      if (!joinCode || !/^[A-Z0-9]{6}$/.test(joinCode)) {
+        clearQr();
+        return;
+      }
+
+      const participantUrl = buildParticipantUrl(joinCode);
+
+      if (participantUrl === lastQrUrl) {
+        qrCodeText.textContent = joinCode;
+        qrDock.classList.remove("hidden");
+        return;
+      }
+
+      qrBox.innerHTML = "";
+      qrCodeText.textContent = joinCode;
+      qrDock.classList.remove("hidden");
+
+      qrInstance = new QRCode(qrBox, {
+        text: participantUrl,
+        width: 140,
+        height: 140,
+        correctLevel: QRCode.CorrectLevel.M
+      });
+
+      lastQrUrl = participantUrl;
     }
 
     function renderConnect() {
@@ -349,6 +479,7 @@
 
     function render() {
       renderByMode(lastState, lastAgg);
+      renderQr();
     }
 
     function detachAgg() {
@@ -388,6 +519,7 @@
             currentRoundId = null;
             detachAgg();
             clearResults();
+            renderQr();
             return;
           }
 
@@ -420,6 +552,7 @@
       sessionId = q.sessionId;
 
       renderConnect();
+      renderQr();
 
       if (!sessionId && !joinCode) {
         setMsg("");
@@ -432,6 +565,7 @@
           const res = await App.resolveJoinCode(joinCode);
           sessionId = res.sessionId;
           renderConnect();
+          renderQr();
         } catch (e) {
           const m = e && e.message ? e.message : String(e);
           setMsg(
@@ -440,6 +574,7 @@
             "joinCode: <span class=\"mono\">" + escapeHtml(joinCode) + "</span><br>" +
             "<span class=\"mono\">" + escapeHtml(m) + "</span>"
           );
+          clearQr();
           renderStandby();
           return;
         }
@@ -447,6 +582,7 @@
 
       if (!sessionId) {
         setMsg("Mangler sessionId. Åpne display med <span class=\"mono\">?joinCode=ABC123</span> eller <span class=\"mono\">?sessionId=...</span>.");
+        clearQr();
         renderStandby();
         return;
       }
