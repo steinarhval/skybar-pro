@@ -34,12 +34,20 @@
       msgBox.innerHTML = html || "";
     }
 
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
     function normalizeCode(v) {
       return (v || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
     }
 
     async function doJoin() {
       setMsg("");
+
       const code = normalizeCode(codeInput.value);
       codeInput.value = code;
 
@@ -49,17 +57,16 @@
       }
 
       try {
-        // Verifiser joinCode -> sessionId (ingen writes)
         const res = await App.resolveJoinCode(code);
 
-        // Behold lokal caching (backup), men UI skal ikke være avhengig av den ved refresh
+        // Lagre lokalt som backup for reconnect/minne
         App.setParticipantSession(res.sessionId, code);
 
-        // Naviger deterministisk: alltid med joinCode i URL
-        window.location.href = `innhenting.html?joinCode=${encodeURIComponent(code)}`;
+        // Primær sannhet: joinCode i URL
+        window.location.href = "innhenting.html?joinCode=" + encodeURIComponent(code);
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
-        setMsg('<strong>Kunne ikke bli med:</strong><br><span class="mono">' + msg + "</span>");
+        setMsg('<strong>Kunne ikke bli med:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
       }
     }
 
@@ -72,9 +79,6 @@
     codeInput.addEventListener("input", () => {
       codeInput.value = normalizeCode(codeInput.value);
     });
-
-    // Liten UX: fokus i feltet ved load
-    codeInput.focus();
   </script>
 </body>
 </html>
