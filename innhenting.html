@@ -348,7 +348,6 @@
       );
     }
 
-    // --- Wake-up reconnect ---
     async function enableNetworkBestEffort() {
       try {
         if (App && App.db && typeof App.db.enableNetwork === "function") {
@@ -401,14 +400,12 @@
       try {
         const urlJoin = parseQueryJoinCode();
 
-        // HARD RULE: innhenting.html skal brukes med ?joinCode=
-        // Hvis ikke: send bruker til join.html (det er der de skal være).
+        // Primær sannhet: innhenting skal åpnes med ?joinCode=
         if (!urlJoin) {
           redirectToJoin();
           return;
         }
 
-        // Vi har joinCode i URL: resolve -> sessionId
         currentJoinCode = urlJoin;
 
         let res;
@@ -433,7 +430,7 @@
 
         currentSessionId = res.sessionId;
 
-        // Backup cache (ingen Firestore-writes)
+        // Backup cache for reconnect/minne
         App.setParticipantSession(currentSessionId, currentJoinCode);
 
         renderInfo();
