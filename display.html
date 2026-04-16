@@ -35,9 +35,8 @@
 
     let currentRoundId = null;
 
-    // Cache av siste data for å kunne rendre konsistent
     let lastState = null; // { status, mode, roundId, question }
-    let lastAgg = null;   // { mode, n, counts }
+    let lastAgg = null;   // agg/live
 
     function setMsg(html) {
       msgBox.innerHTML = html || "";
@@ -112,11 +111,18 @@
       resultBox.innerHTML = `<strong>Display</strong><br>State er lastet, men venter på aktiv <span class="mono">roundId</span>…`;
     }
 
-    function renderWrongMode(mode) {
+    function renderMissingAgg(mode, roundId, status) {
+      const statusLine = (status === "collect")
+        ? `Innsamling pågår (<span class="mono">collect</span>)`
+        : (status === "results")
+          ? `Resultater vises (<span class="mono">results</span>)`
+          : `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
+
       resultBox.innerHTML = `
-        <strong>Display</strong><br>
-        Denne siden støtter kun <span class="mono">mode="multi"</span> i denne fasen.<br>
-        Nåværende mode: <span class="mono">${escapeHtml(mode || "-")}</span>
+        <strong>Resultat (${escapeHtml((mode || "-").toUpperCase())})</strong><br>
+        ${statusLine}<br>
+        roundId: <span class="mono">${escapeHtml(roundId || "-")}</span><br>
+        Ingen aggregert data ennå.
       `;
     }
 
@@ -133,31 +139,32 @@
       return map;
     }
 
-    function renderMultiFromStateAndAgg(state, agg) {
-      if (!state) {
-        clearResults();
-        return;
+    function getStatusLine(status) {
+      if (status === "collect") {
+        return `Innsamling pågår (<span class="mono">collect</span>)`;
       }
+      if (status === "results") {
+        return `Resultater vises (<span class="mono">results</span>)`;
+      }
+      if (status === "paused") {
+        return `Pause (<span class="mono">paused</span>)`;
+      }
+      return `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
+    }
 
+    function renderMulti(state, agg) {
       const status = state.status || null;
-      const mode = state.mode || null;
       const roundId = state.roundId || null;
 
-      if (mode && mode !== "multi") {
-        renderWrongMode(mode);
+      if (!agg) {
+        renderMissingAgg("multi", roundId, status);
         return;
       }
 
-      if (!roundId) {
-        renderWaitingForRound();
-        return;
-      }
-
-      const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
-      const n = (agg && typeof agg.n === "number") ? agg.n : 0;
+      const counts = (agg.counts && typeof agg.counts === "object") ? agg.counts : {};
+      const n = (typeof agg.n === "number") ? agg.n : 0;
 
       const labelMap = buildChoiceLabelMap(state.question);
-
       const qChoices = (state.question && Array.isArray(state.question.choices)) ? state.question.choices : [];
       const haveChoiceList = qChoices.length >= 2;
 
@@ -183,15 +190,9 @@
         }
       }
 
-      const statusLine = (status === "collect")
-        ? `Innsamling pågår (<span class="mono">collect</span>)`
-        : (status === "results")
-          ? `Resultater vises (<span class="mono">results</span>)`
-          : `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
-
       resultBox.innerHTML = `
         <strong>Resultat (MULTI)</strong><br>
-        ${statusLine}<br>
+        ${getStatusLine(status)}<br>
         roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
         n: <span class="mono">${n}</span><br>
 
@@ -202,8 +203,152 @@
       `;
     }
 
+    function renderLikert(state, agg) {
+      const status = state.status || null;
+      const roundId = state.roundId || null;
+
+      if (!agg) {
+        renderMissingAgg("likert", roundId, status);
+        return;
+      }
+
+      const n = (typeof agg.n === "number") ? agg.n : 0;
+      const sum = (typeof agg.sum === "number") ? agg.sum : 0;
+      const count = (typeof agg.count === "number") ? agg.count : 0;
+      const avg = count > 0 ? (sum / count) : 0;
+
+      resultBox.innerHTML = `
+        <strong>Resultat (LIKERT)</strong><br>
+        ${getStatusLine(status)}<br>
+        roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
+        n: <span class="mono">${n}</span><br>
+        count: <span class="mono">${count}</span><br>
+        sum: <span class="mono">${sum}</span><br>
+        snitt: <span class="mono">${count > 0 ? avg.toFixed(2) : "-"}</span>
+      `;
+    }
+
+    function renderOpen(state, agg) {
+      const status = state.status || null;
+      const roundId = state.roundId || null;
+
+      if (!agg) {
+        renderMissingAgg("open", roundId, status);
+        return;
+      }
+
+      const n = (typeof agg.n === "number") ? agg.n : 0;
+      const texts = Array.isArray(agg.texts) ? agg.texts : [];
+
+      let items = "";
+      if (!texts.length) {
+        items = `<li>(ingen svar ennå)</li>`;
+      } else {
+        items = texts.map(t => `<li>${escapeHtml(String(t))}</li>`).join("");
+      }
+
+      resultBox.innerHTML = `
+        <strong>Resultat (OPEN)</strong><br>
+        ${getStatusLine(status)}<br>
+        roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
+        n: <span class="mono">${n}</span><br>
+
+        <div class="mt20">
+          <strong>Svar</strong>
+          <ol class="mt20">
+            ${items}
+          </ol>
+        </div>
+      `;
+    }
+
+    function renderWordcloud(state, agg) {
+      const status = state.status || null;
+      const roundId = state.roundId || null;
+
+      if (!agg) {
+        renderMissingAgg("wordcloud", roundId, status);
+        return;
+      }
+
+      const n = (typeof agg.n === "number") ? agg.n : 0;
+      const freq = (agg.freq && typeof agg.freq === "object") ? agg.freq : {};
+
+      const entries = Object.entries(freq)
+        .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+
+      let rows = "";
+      if (!entries.length) {
+        rows = `<tr><td>(ingen ord ennå)</td><td class="mono">0</td></tr>`;
+      } else {
+        rows = entries.map(([word, count]) => {
+          return `<tr><td>${escapeHtml(String(word))}</td><td class="mono">${typeof count === "number" ? count : 0}</td></tr>`;
+        }).join("");
+      }
+
+      resultBox.innerHTML = `
+        <strong>Resultat (WORDCLOUD)</strong><br>
+        ${getStatusLine(status)}<br>
+        roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
+        n: <span class="mono">${n}</span><br>
+
+        <table class="mt20">
+          <thead><tr><th>Ord</th><th>Antall</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function renderByMode(state, agg) {
+      if (!state) {
+        clearResults();
+        return;
+      }
+
+      const mode = state.mode || null;
+      const roundId = state.roundId || null;
+
+      if (!mode) {
+        resultBox.innerHTML = `
+          <strong>Display</strong><br>
+          Ingen modus valgt ennå.
+        `;
+        return;
+      }
+
+      if (!roundId) {
+        renderWaitingForRound();
+        return;
+      }
+
+      if (mode === "multi") {
+        renderMulti(state, agg);
+        return;
+      }
+
+      if (mode === "likert") {
+        renderLikert(state, agg);
+        return;
+      }
+
+      if (mode === "open") {
+        renderOpen(state, agg);
+        return;
+      }
+
+      if (mode === "wordcloud") {
+        renderWordcloud(state, agg);
+        return;
+      }
+
+      resultBox.innerHTML = `
+        <strong>Display</strong><br>
+        Ukjent modus: <span class="mono">${escapeHtml(mode)}</span>
+      `;
+    }
+
     function render() {
-      renderMultiFromStateAndAgg(lastState, lastAgg);
+      renderByMode(lastState, lastAgg);
     }
 
     function detachAgg() {
@@ -246,16 +391,7 @@
             return;
           }
 
-          const mode = state.mode || null;
           const roundId = state.roundId || null;
-
-          if (mode && mode !== "multi") {
-            currentRoundId = roundId || null;
-            detachAgg();
-            lastAgg = null;
-            render();
-            return;
-          }
 
           if (!roundId) {
             currentRoundId = null;
@@ -285,14 +421,12 @@
 
       renderConnect();
 
-      // Ingen parametre -> standby (ikke prøv deltaker-cache her)
       if (!sessionId && !joinCode) {
         setMsg("");
         renderStandby();
         return;
       }
 
-      // Hvis vi bare har joinCode: resolve -> sessionId
       if (!sessionId && joinCode) {
         try {
           const res = await App.resolveJoinCode(joinCode);
