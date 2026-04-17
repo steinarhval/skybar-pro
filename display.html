@@ -11,10 +11,10 @@
       right: 16px;
       bottom: 16px;
       background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 10px;
+      border: 1px solid var(--color-border, #ddd);
+      border-radius: 12px;
       padding: 10px;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+      box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
       max-width: 180px;
       z-index: 50;
     }
@@ -25,7 +25,7 @@
 
     .qrTitle {
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 700;
       margin-bottom: 8px;
     }
 
@@ -78,18 +78,31 @@
 </head>
 
 <body>
-  <h1>Display</h1>
+  <h1>Plenum</h1>
 
-  <div id="connectBox" class="mt20"></div>
-  <div id="stateBox" class="mt20"></div>
-  <div id="resultBox" class="mt20"></div>
-  <div id="msgBox" class="mt20"></div>
+  <div id="msgBox" class="mt20" aria-live="polite"></div>
+
+  <div id="heroBox" class="mt20">
+    <strong>Spørsmål</strong><br>
+    Venter på oppstart…
+  </div>
+
+  <div id="resultBox" class="mt20">
+    <strong>Resultat</strong><br>
+    Venter på aktiv runde…
+  </div>
+
+  <details id="techDetails" class="mt20">
+    <summary><strong>Vis teknisk info</strong></summary>
+    <div id="connectBox" class="mt20"></div>
+    <div id="stateBox" class="mt20"></div>
+  </details>
 
   <div id="qrDock" class="qrDock hidden" aria-live="polite">
     <div class="qrTitle">Scan for å delta</div>
     <div id="qrBox"></div>
     <div class="qrCodeText mono" id="qrCodeText"></div>
-    <div class="qrText">Mobilen går rett til innhenting.</div>
+    <div class="qrText">Mobilen går rett til svarskjermen.</div>
   </div>
 
   <!-- Firebase SDK -->
@@ -103,6 +116,7 @@
   <script src="app.js"></script>
 
   <script>
+    const heroBox = document.getElementById("heroBox");
     const connectBox = document.getElementById("connectBox");
     const stateBox = document.getElementById("stateBox");
     const resultBox = document.getElementById("resultBox");
@@ -217,12 +231,58 @@
       `;
     }
 
+    function renderHero(state) {
+      if (!state) {
+        heroBox.innerHTML = `
+          <strong>Spørsmål</strong><br>
+          Venter på oppstart…
+        `;
+        return;
+      }
+
+      const status = state.status || null;
+      const mode = state.mode || null;
+      const roundId = state.roundId || null;
+      const questionText = state.question && state.question.text
+        ? String(state.question.text).trim()
+        : "";
+
+      const statusText = status ? String(status) : "-";
+      const modeText = mode ? String(mode).toUpperCase() : "-";
+
+      if (!questionText) {
+        heroBox.innerHTML = `
+          <strong>Spørsmål</strong><br>
+          <span class="mono">Mode:</span> ${escapeHtml(modeText)}<br>
+          <span class="mono">Status:</span> ${escapeHtml(statusText)}<br>
+          <span class="mono">Runde:</span> ${escapeHtml(roundId || "-")}<br><br>
+          Venter på spørsmålsformulering…
+        `;
+        return;
+      }
+
+      heroBox.innerHTML = `
+        <strong>Spørsmål</strong><br>
+        <span class="mono">Mode:</span> ${escapeHtml(modeText)}<br>
+        <span class="mono">Status:</span> ${escapeHtml(statusText)}<br>
+        <span class="mono">Runde:</span> ${escapeHtml(roundId || "-")}<br><br>
+        <div>${escapeHtml(questionText)}</div>
+      `;
+    }
+
     function clearResults() {
-      resultBox.innerHTML = "";
+      resultBox.innerHTML = `
+        <strong>Resultat</strong><br>
+        Ingen data å vise akkurat nå.
+      `;
     }
 
     function renderStandby() {
-      stateBox.innerHTML = "";
+      heroBox.innerHTML = `
+        <strong>Spørsmål</strong><br>
+        Venter på oppstart…
+      `;
+
       resultBox.innerHTML = `
         <strong>Venter på oppstart</strong><br>
         Denne skjermen er klar, men det er ingen aktiv kobling akkurat nå.<br><br>
@@ -234,11 +294,17 @@
     }
 
     function renderLoadingState() {
-      resultBox.innerHTML = `<strong>Display</strong><br>Laster <span class="mono">state/live</span>…`;
+      resultBox.innerHTML = `
+        <strong>Resultat</strong><br>
+        Laster <span class="mono">state/live</span>…
+      `;
     }
 
     function renderWaitingForRound() {
-      resultBox.innerHTML = `<strong>Display</strong><br>State er lastet, men venter på aktiv <span class="mono">roundId</span>…`;
+      resultBox.innerHTML = `
+        <strong>Resultat</strong><br>
+        State er lastet, men venter på aktiv <span class="mono">roundId</span>…
+      `;
     }
 
     function renderMissingAgg(mode, roundId, status) {
@@ -246,12 +312,14 @@
         ? `Innsamling pågår (<span class="mono">collect</span>)`
         : (status === "results")
           ? `Resultater vises (<span class="mono">results</span>)`
-          : `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
+          : (status === "paused")
+            ? `Pause (<span class="mono">paused</span>)`
+            : `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
 
       resultBox.innerHTML = `
         <strong>Resultat (${escapeHtml((mode || "-").toUpperCase())})</strong><br>
         ${statusLine}<br>
-        roundId: <span class="mono">${escapeHtml(roundId || "-")}</span><br>
+        roundId: <span class="mono">${escapeHtml(roundId || "-")}</span><br><br>
         Ingen aggregert data ennå.
       `;
     }
@@ -440,7 +508,7 @@
 
       if (!mode) {
         resultBox.innerHTML = `
-          <strong>Display</strong><br>
+          <strong>Resultat</strong><br>
           Ingen modus valgt ennå.
         `;
         return;
@@ -472,12 +540,13 @@
       }
 
       resultBox.innerHTML = `
-        <strong>Display</strong><br>
+        <strong>Resultat</strong><br>
         Ukjent modus: <span class="mono">${escapeHtml(mode)}</span>
       `;
     }
 
     function render() {
+      renderHero(lastState);
       renderByMode(lastState, lastAgg);
       renderQr();
     }
@@ -500,7 +569,7 @@
         },
         (err) => {
           const m = err && err.message ? err.message : String(err);
-          setMsg("<strong>Kunne ikke lese agg/live:</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
+          setMsg("<strong>Kunne ikke lese agg/live.</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
         }
       );
     }
@@ -518,8 +587,7 @@
           if (!state) {
             currentRoundId = null;
             detachAgg();
-            clearResults();
-            renderQr();
+            render();
             return;
           }
 
@@ -541,7 +609,7 @@
         },
         (err) => {
           const m = err && err.message ? err.message : String(err);
-          setMsg("<strong>Kunne ikke lese state/live:</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
+          setMsg("<strong>Kunne ikke lese state/live.</strong><br><span class=\"mono\">" + escapeHtml(m) + "</span>");
         }
       );
     }
@@ -552,6 +620,7 @@
       sessionId = q.sessionId;
 
       renderConnect();
+      renderHero(null);
       renderQr();
 
       if (!sessionId && !joinCode) {
