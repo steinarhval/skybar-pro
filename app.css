@@ -28,6 +28,16 @@
   --color-shadow: rgba(16, 24, 40, 0.08);
   --color-shadow-strong: rgba(16, 24, 40, 0.12);
 
+    /* Multi chart palette */
+  --multi-green: #5b8f72;
+  --multi-yellow: #c9a24a;
+  --multi-red: #b85c4e;
+
+  --multi-blue: #5d7fa3;
+  --multi-purple: #8a6fa8;
+  --multi-teal: #4f8f95;
+  --multi-slate: #7a8798;
+
   /* Radius */
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -540,5 +550,108 @@ body > button + button {
     transition: none !important;
     animation: none !important;
     scroll-behavior: auto !important;
+  }
+}
+/* Multi chart */
+.multiChart {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 16px;
+  min-height: 320px;
+  padding: 20px 8px 8px;
+  margin-top: 20px;
+}
+
+.multiBarWrap {
+  flex: 1 1 0;
+  min-width: 72px;
+  max-width: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.multiBarValue {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--color-text);
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.multiBarValueSub {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--color-text-soft);
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.multiBarTrack {
+  width: 100%;
+  height: 220px;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 8px;
+}
+
+.multiBar {
+  width: 100%;
+  border-radius: 10px 10px 6px 6px;
+  min-height: 8px;
+  box-shadow: inset 0 -1px 0 rgba(255,255,255,0.18);
+  transition: height 180ms ease;
+}
+
+.multiBarLabel {
+  margin-top: 10px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--color-text);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.multiLegend {
+  margin-top: 16px;
+  color: var(--color-text-soft);
+  font-size: 0.95rem;
+}
+
+.multiBar--green { background: var(--multi-green); }
+.multiBar--yellow { background: var(--multi-yellow); }
+.multiBar--red { background: var(--multi-red); }
+.multiBar--blue { background: var(--multi-blue); }
+.multiBar--purple { background: var(--multi-purple); }
+.multiBar--teal { background: var(--multi-teal); }
+.multiBar--slate { background: var(--multi-slate); }
+
+@media (max-width: 720px) {
+  .multiChart {
+    gap: 10px;
+    min-height: 260px;
+    padding-top: 12px;
+  }
+
+  .multiBarWrap {
+    min-width: 58px;
+  }
+
+  .multiBarTrack {
+    height: 180px;
+    padding: 6px;
+  }
+
+  .multiBarValue {
+    font-size: 0.85rem;
+  }
+
+  .multiBarLabel {
+    font-size: 0.9rem;
   }
 }
