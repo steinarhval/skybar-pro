@@ -350,6 +350,30 @@
       return `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
     }
 
+    function getMultiBarClass(index, total) {
+      if (total === 2) {
+        return index === 0 ? "multiBar--green" : "multiBar--red";
+      }
+
+      if (total === 3) {
+        if (index === 0) return "multiBar--green";
+        if (index === 1) return "multiBar--yellow";
+        return "multiBar--red";
+      }
+
+      const palette = [
+        "multiBar--blue",
+        "multiBar--green",
+        "multiBar--yellow",
+        "multiBar--red",
+        "multiBar--purple",
+        "multiBar--teal",
+        "multiBar--slate"
+      ];
+
+      return palette[index % palette.length];
+    }
+
     function renderMulti(state, agg) {
       const status = state.status || null;
       const roundId = state.roundId || null;
@@ -366,27 +390,46 @@
       const qChoices = (state.question && Array.isArray(state.question.choices)) ? state.question.choices : [];
       const haveChoiceList = qChoices.length >= 2;
 
-      let rows = "";
+      let entries = [];
 
       if (haveChoiceList) {
-        rows = qChoices.map((c, idx) => {
+        entries = qChoices.map((c, idx) => {
           const id = (c && c.id != null) ? String(c.id) : ("choice_" + (idx + 1));
           const label = (c && (c.label || c.text)) ? String(c.label || c.text) : (labelMap[id] || id);
-          const v = (typeof counts[id] === "number") ? counts[id] : 0;
-          return `<tr><td>${escapeHtml(label)}</td><td class="mono">${v}</td></tr>`;
-        }).join("");
+          const count = (typeof counts[id] === "number") ? counts[id] : 0;
+          return { id, label, count };
+        });
       } else {
-        const entries = Object.entries(counts);
-        entries.sort((a, b) => (b[1] || 0) - (a[1] || 0));
-        if (!entries.length) {
-          rows = `<tr><td>(ingen)</td><td class="mono">0</td></tr>`;
-        } else {
-          rows = entries.map(([id, v]) => {
-            const label = labelMap[String(id)] || String(id);
-            return `<tr><td>${escapeHtml(label)}</td><td class="mono">${typeof v === "number" ? v : 0}</td></tr>`;
-          }).join("");
-        }
+        entries = Object.entries(counts).map(([id, count]) => ({
+          id: String(id),
+          label: labelMap[String(id)] || String(id),
+          count: typeof count === "number" ? count : 0
+        }));
       }
+
+      if (!entries.length) {
+        renderMissingAgg("multi", roundId, status);
+        return;
+      }
+
+      const barsHtml = entries.map((entry, idx) => {
+        const pct = n > 0 ? Math.round((entry.count / n) * 100) : 0;
+        const heightPct = Math.max(pct, entry.count > 0 ? 4 : 0);
+        const barClass = getMultiBarClass(idx, entries.length);
+
+        return `
+          <div class="multiBarWrap">
+            <div class="multiBarValue">
+              ${pct} %
+              <span class="multiBarValueSub">${entry.count} svar</span>
+            </div>
+            <div class="multiBarTrack">
+              <div class="multiBar ${barClass}" style="height:${heightPct}%;"></div>
+            </div>
+            <div class="multiBarLabel">${escapeHtml(entry.label)}</div>
+          </div>
+        `;
+      }).join("");
 
       resultBox.innerHTML = `
         <strong>Resultat (MULTI)</strong><br>
@@ -394,10 +437,13 @@
         roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
         n: <span class="mono">${n}</span><br>
 
-        <table class="mt20">
-          <thead><tr><th>Valg</th><th>Antall</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
+        <div class="multiChart">
+          ${barsHtml}
+        </div>
+
+        <div class="multiLegend">
+          Søylene viser prosentvis fordeling av alle innsendte svar i denne runden.
+        </div>
       `;
     }
 
