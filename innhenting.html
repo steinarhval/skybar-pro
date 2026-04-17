@@ -8,12 +8,25 @@
 </head>
 
 <body>
-  <h1>Innhenting</h1>
+  <h1>Delta</h1>
 
-  <div id="infoBox" class="mt20"></div>
-  <div id="stateBox" class="mt20"></div>
-  <div id="voteBox" class="mt20"></div>
-  <div id="msgBox" class="mt20"></div>
+  <div id="msgBox" class="mt20" aria-live="polite"></div>
+
+  <div id="questionBox" class="mt20">
+    <strong>Spørsmål</strong><br>
+    Venter på spørsmål…
+  </div>
+
+  <div id="voteBox" class="mt20">
+    <strong>Svar</strong><br>
+    Venter på aktiv runde…
+  </div>
+
+  <details id="techDetails" class="mt20">
+    <summary><strong>Vis teknisk info</strong></summary>
+    <div id="infoBox" class="mt20"></div>
+    <div id="stateBox" class="mt20"></div>
+  </details>
 
   <div class="mt20">
     <button id="backBtn">Til join</button>
@@ -25,6 +38,7 @@
   <script src="app.js"></script>
 
   <script>
+    const questionBox = document.getElementById("questionBox");
     const infoBox = document.getElementById("infoBox");
     const stateBox = document.getElementById("stateBox");
     const voteBox = document.getElementById("voteBox");
@@ -40,6 +54,7 @@
     let currentRoundId = null;
     let currentMode = null;
     let currentQuestion = null;
+    let currentStatus = null;
 
     // lockState: "none" | "unknown" | "unlocked" | "locked"
     let lockState = "none";
@@ -91,16 +106,66 @@
       `;
     }
 
+    function renderQuestionBox() {
+      if (!currentQuestion && !currentMode) {
+        questionBox.innerHTML = `
+          <strong>Spørsmål</strong><br>
+          Venter på spørsmål…
+        `;
+        return;
+      }
+
+      const text = currentQuestion && currentQuestion.text
+        ? String(currentQuestion.text).trim()
+        : "";
+
+      const modeLabel = currentMode ? currentMode.toUpperCase() : "-";
+      const statusLabel = currentStatus ? currentStatus : "-";
+
+      if (!text) {
+        questionBox.innerHTML = `
+          <strong>Spørsmål</strong><br>
+          <span class="mono">Mode:</span> ${escapeHtml(modeLabel)}<br>
+          <span class="mono">Status:</span> ${escapeHtml(statusLabel)}<br><br>
+          Venter på spørsmålsformulering…
+        `;
+        return;
+      }
+
+      questionBox.innerHTML = `
+        <strong>Spørsmål</strong><br>
+        <span class="mono">Mode:</span> ${escapeHtml(modeLabel)}<br>
+        <span class="mono">Status:</span> ${escapeHtml(statusLabel)}<br><br>
+        <div>${escapeHtml(text)}</div>
+      `;
+    }
+
     function setVoteUIWaiting() {
-      voteBox.innerHTML = `<strong>Stemme</strong><br>Venter på aktiv roundId og mode/spørsmål.`;
+      voteBox.innerHTML = `
+        <strong>Svar</strong><br>
+        Venter på aktiv runde og spørsmål…
+      `;
     }
 
     function setVoteUICheckingLock() {
-      voteBox.innerHTML = `<strong>Stemme</strong><br><span class="mono">Sjekker om du allerede har stemt…</span>`;
+      voteBox.innerHTML = `
+        <strong>Svar</strong><br>
+        <span class="mono">Sjekker om du allerede har svart…</span>
+      `;
     }
 
     function setVoteUILockedAlready() {
-      voteBox.innerHTML = `<strong>Stemme</strong><br><span class="mono">Du har allerede stemt i denne runden (låst).</span>`;
+      voteBox.innerHTML = `
+        <strong>Svar registrert</strong><br>
+        <span class="mono">Du har allerede svart i denne runden.</span>
+      `;
+    }
+
+    function renderPaused() {
+      voteBox.innerHTML = `
+        <strong>Pause</strong><br>
+        Innsamlingen er satt på pause akkurat nå.
+      `;
     }
 
     function renderMulti(choices) {
@@ -111,7 +176,7 @@
       }).join("");
 
       voteBox.innerHTML = `
-        <strong>Stemme (MULTI)</strong>
+        <strong>Velg ett svar</strong>
         <div class="btnRow mt20" id="choiceRow">${buttons}</div>
       `;
 
@@ -125,10 +190,10 @@
 
     function renderLikert() {
       voteBox.innerHTML = `
-        <strong>Stemme (LIKERT)</strong><br>
+        <strong>Velg tall</strong><br>
         <div class="mt20">
           <input id="likertInput" class="input" type="number" inputmode="numeric" placeholder="0-10" />
-          <button id="likertSend" class="btn">Send</button>
+          <button id="likertSend" class="btn">Send svar</button>
         </div>
       `;
 
@@ -136,7 +201,7 @@
         const raw = document.getElementById("likertInput").value;
         const n = Number(raw);
         if (!Number.isFinite(n)) {
-          setMsg('<span class="mono">Skriv inn et tall.</span>');
+          setMsg('<strong>Mangler gyldig svar.</strong><br><span class="mono">Skriv inn et tall.</span>');
           return;
         }
         submitVote("likert", n);
@@ -145,11 +210,11 @@
 
     function renderOpen() {
       voteBox.innerHTML = `
-        <strong>Stemme (OPEN)</strong><br>
+        <strong>Skriv svaret ditt</strong><br>
         <div class="mt20">
           <textarea id="openInput" class="inputArea" rows="4" placeholder="Skriv svaret ditt..."></textarea>
           <div class="mt20">
-            <button id="openSend" class="btn">Send</button>
+            <button id="openSend" class="btn">Send svar</button>
           </div>
         </div>
       `;
@@ -157,7 +222,7 @@
       document.getElementById("openSend").addEventListener("click", () => {
         const t = (document.getElementById("openInput").value || "").trim();
         if (!t) {
-          setMsg('<span class="mono">Skriv noe før du sender.</span>');
+          setMsg('<strong>Mangler svar.</strong><br><span class="mono">Skriv noe før du sender.</span>');
           return;
         }
         submitVote("open", t);
@@ -166,17 +231,17 @@
 
     function renderWordcloud() {
       voteBox.innerHTML = `
-        <strong>Stemme (WORDCLOUD)</strong><br>
+        <strong>Skriv ett ord eller en kort frase</strong><br>
         <div class="mt20">
           <input id="wcInput" class="inputWide" type="text" placeholder="Ett ord eller kort frase" />
-          <button id="wcSend" class="btn">Send</button>
+          <button id="wcSend" class="btn">Send svar</button>
         </div>
       `;
 
       document.getElementById("wcSend").addEventListener("click", () => {
         const t = (document.getElementById("wcInput").value || "").trim();
         if (!t) {
-          setMsg('<span class="mono">Skriv noe før du sender.</span>');
+          setMsg('<strong>Mangler svar.</strong><br><span class="mono">Skriv noe før du sender.</span>');
           return;
         }
         submitVote("wordcloud", t);
@@ -184,6 +249,13 @@
     }
 
     function renderVoteUI() {
+      renderQuestionBox();
+
+      if (currentStatus === "paused") {
+        renderPaused();
+        return;
+      }
+
       if (!currentRoundId || !currentMode) {
         lockState = currentRoundId ? lockState : "none";
         setVoteUIWaiting();
@@ -234,7 +306,8 @@
         return App.submitVoteOnce(currentSessionId, currentRoundId, mode, value);
       }
 
-      setMsg("");
+      setMsg('<span class="mono">Sender svar…</span>');
+
       try {
         const res = await trySendOnce();
 
@@ -242,7 +315,9 @@
         renderVoteUI();
 
         if (!(res && res.already)) {
-          setMsg('<span class="mono">Takk! Stemmen er sendt.</span>');
+          setMsg('<strong>Takk.</strong><br><span class="mono">Svaret ditt er sendt.</span>');
+        } else {
+          setMsg('<span class="mono">Du hadde allerede svart i denne runden.</span>');
         }
       } catch (e) {
         const msg = (e && e.message) ? String(e.message) : String(e);
@@ -254,7 +329,7 @@
 
         if (looksLikeWeirdState) {
           try {
-            setMsg('<span class="mono">Tilkobling våknet litt skeivt – prøver igjen…</span>');
+            setMsg('<span class="mono">Tilkoblingen våknet litt skeivt – prøver igjen…</span>');
 
             if (App && App.db && typeof App.db.disableNetwork === "function") {
               try { await App.db.disableNetwork(); } catch (_) {}
@@ -271,18 +346,18 @@
             renderVoteUI();
 
             if (!(res2 && res2.already)) {
-              setMsg('<span class="mono">Takk! Stemmen er sendt.</span>');
+              setMsg('<strong>Takk.</strong><br><span class="mono">Svaret ditt er sendt.</span>');
             } else {
-              setMsg("");
+              setMsg('<span class="mono">Du hadde allerede svart i denne runden.</span>');
             }
 
             return;
           } catch (e2) {
             const msg2 = (e2 && e2.message) ? String(e2.message) : String(e2);
-            setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + escapeHtml(msg2) + "</span>");
+            setMsg('<strong>Kunne ikke sende svar.</strong><br><span class="mono">' + escapeHtml(msg2) + "</span>");
           }
         } else {
-          setMsg('<strong>Kunne ikke sende stemme:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
+          setMsg('<strong>Kunne ikke sende svar.</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
         }
       } finally {
         isSubmitting = false;
@@ -307,7 +382,7 @@
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
-          setMsg('<strong>Kunne ikke lese vote-lock:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
+          setMsg('<strong>Kunne ikke lese vote-lock.</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
           lockState = "unknown";
           renderVoteUI();
         }
@@ -322,6 +397,7 @@
         (state) => {
           renderState(state);
 
+          currentStatus = state && state.status ? state.status : null;
           currentMode = state && state.mode ? state.mode : null;
           currentQuestion = state && state.question ? state.question : null;
 
@@ -330,8 +406,9 @@
           if (newRoundId !== currentRoundId) {
             currentRoundId = newRoundId;
 
-            if (currentRoundId) attachLock(currentSessionId, currentRoundId);
-            else {
+            if (currentRoundId) {
+              attachLock(currentSessionId, currentRoundId);
+            } else {
               if (unsubLock) unsubLock();
               unsubLock = null;
               lockState = "none";
@@ -343,7 +420,7 @@
         },
         (err) => {
           const msg = err && err.message ? err.message : String(err);
-          setMsg('<strong>Kunne ikke lese state/live:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
+          setMsg('<strong>Kunne ikke lese state/live.</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
         }
       );
     }
@@ -400,7 +477,6 @@
       try {
         const urlJoin = parseQueryJoinCode();
 
-        // Primær sannhet: innhenting skal åpnes med ?joinCode=
         if (!urlJoin) {
           redirectToJoin();
           return;
@@ -416,6 +492,7 @@
           currentSessionId = null;
           renderInfo();
           stateBox.innerHTML = "";
+          renderQuestionBox();
           setVoteUIWaiting();
           setMsg(
             `<strong>Koden er ikke aktiv.</strong><br>
@@ -430,10 +507,10 @@
 
         currentSessionId = res.sessionId;
 
-        // Backup cache for reconnect/minne
         App.setParticipantSession(currentSessionId, currentJoinCode);
 
         renderInfo();
+        renderQuestionBox();
         attachState(currentSessionId);
         setVoteUIWaiting();
         setMsg("");
@@ -442,7 +519,8 @@
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
         renderInfo();
-        setMsg('<strong>Oppstart feilet:</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
+        renderQuestionBox();
+        setMsg('<strong>Oppstart feilet.</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
         setVoteUIWaiting();
         bootDone = true;
       }
