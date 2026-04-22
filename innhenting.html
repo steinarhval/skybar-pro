@@ -5,20 +5,117 @@
   <title>Innhenting</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="app.css" />
+  <style>
+    #msgBox:empty {
+      display: none;
+    }
+
+    #questionBox {
+      font-size: 2rem;
+      font-weight: 600;
+      text-align: center;
+      max-width: 900px;
+      margin: 28px auto 20px auto;
+      line-height: 1.3;
+    }
+
+    #voteBox {
+      max-width: 960px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .answerGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-top: 20px;
+    }
+
+    .answerBtn {
+      min-height: 84px;
+      border-radius: 14px;
+      border: 1px solid var(--color-border);
+      font-size: 1.1rem;
+      font-weight: 600;
+      padding: 16px 18px;
+      text-align: center;
+      cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+      color: #142033;
+      background: #f3f6fa;
+    }
+
+    .answerBtn:hover {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .answerBtn:active {
+      transform: translateY(0);
+    }
+
+    .answerBtn--green {
+      background: rgba(91, 143, 114, 0.18);
+      border-color: rgba(91, 143, 114, 0.34);
+    }
+
+    .answerBtn--yellow {
+      background: rgba(201, 162, 74, 0.18);
+      border-color: rgba(201, 162, 74, 0.34);
+    }
+
+    .answerBtn--red {
+      background: rgba(184, 92, 78, 0.18);
+      border-color: rgba(184, 92, 78, 0.34);
+    }
+
+    .answerBtn--blue {
+      background: rgba(93, 127, 163, 0.18);
+      border-color: rgba(93, 127, 163, 0.34);
+    }
+
+    .answerBtn--purple {
+      background: rgba(138, 111, 168, 0.18);
+      border-color: rgba(138, 111, 168, 0.34);
+    }
+
+    .answerBtn--teal {
+      background: rgba(79, 143, 149, 0.18);
+      border-color: rgba(79, 143, 149, 0.34);
+    }
+
+    .answerBtn--slate {
+      background: rgba(122, 135, 152, 0.18);
+      border-color: rgba(122, 135, 152, 0.34);
+    }
+
+    @media (max-width: 700px) {
+      #questionBox {
+        font-size: 1.5rem;
+        margin-top: 18px;
+      }
+
+      .answerGrid {
+        grid-template-columns: 1fr;
+      }
+
+      .answerBtn {
+        min-height: 72px;
+        font-size: 1rem;
+      }
+    }
+  </style>
 </head>
 
 <body>
-  <h1>Delta</h1>
-
   <div id="msgBox" class="mt20" aria-live="polite"></div>
 
   <div id="questionBox" class="mt20">
-    <strong>Spørsmål</strong><br>
     Venter på spørsmål…
   </div>
 
   <div id="voteBox" class="mt20">
-    <strong>Svar</strong><br>
     Venter på aktiv runde…
   </div>
 
@@ -27,10 +124,6 @@
     <div id="infoBox" class="mt20"></div>
     <div id="stateBox" class="mt20"></div>
   </details>
-
-  <div class="mt20">
-    <button id="backBtn">Til join</button>
-  </div>
 
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
@@ -43,7 +136,6 @@
     const stateBox = document.getElementById("stateBox");
     const voteBox = document.getElementById("voteBox");
     const msgBox = document.getElementById("msgBox");
-    const backBtn = document.getElementById("backBtn");
 
     let unsubState = null;
     let unsubLock = null;
@@ -59,12 +151,10 @@
     // lockState: "none" | "unknown" | "unlocked" | "locked"
     let lockState = "none";
 
-    // boot guards / reconnect guards
     let bootDone = false;
     let reconnectTimer = null;
     let lastReconnectAt = 0;
 
-    // IMPORTANT: ikke reconnect/roter mens vi sender vote
     let isSubmitting = false;
 
     function setMsg(html) {
@@ -108,10 +198,7 @@
 
     function renderQuestionBox() {
       if (!currentQuestion && !currentMode) {
-        questionBox.innerHTML = `
-          <strong>Spørsmål</strong><br>
-          Venter på spørsmål…
-        `;
+        questionBox.innerHTML = `Venter på spørsmål…`;
         return;
       }
 
@@ -119,37 +206,17 @@
         ? String(currentQuestion.text).trim()
         : "";
 
-      const modeLabel = currentMode ? currentMode.toUpperCase() : "-";
-      const statusLabel = currentStatus ? currentStatus : "-";
-
-      if (!text) {
-        questionBox.innerHTML = `
-          <strong>Spørsmål</strong><br>
-          <span class="mono">Mode:</span> ${escapeHtml(modeLabel)}<br>
-          <span class="mono">Status:</span> ${escapeHtml(statusLabel)}<br><br>
-          Venter på spørsmålsformulering…
-        `;
-        return;
-      }
-
-      questionBox.innerHTML = `
-        <strong>Spørsmål</strong><br>
-        <span class="mono">Mode:</span> ${escapeHtml(modeLabel)}<br>
-        <span class="mono">Status:</span> ${escapeHtml(statusLabel)}<br><br>
-        <div>${escapeHtml(text)}</div>
-      `;
+      questionBox.innerHTML = text
+        ? `<div>${escapeHtml(text)}</div>`
+        : `<span class="mono">Venter på spørsmålsformulering…</span>`;
     }
 
     function setVoteUIWaiting() {
-      voteBox.innerHTML = `
-        <strong>Svar</strong><br>
-        Venter på aktiv runde og spørsmål…
-      `;
+      voteBox.innerHTML = `Venter på aktiv runde og spørsmål…`;
     }
 
     function setVoteUICheckingLock() {
       voteBox.innerHTML = `
-        <strong>Svar</strong><br>
         <span class="mono">Sjekker om du allerede har svart…</span>
       `;
     }
@@ -168,16 +235,46 @@
       `;
     }
 
+    function getMultiButtonClass(index, total) {
+      if (total === 2) {
+        return index === 0 ? "answerBtn--green" : "answerBtn--red";
+      }
+
+      if (total === 3) {
+        if (index === 0) return "answerBtn--green";
+        if (index === 1) return "answerBtn--yellow";
+        return "answerBtn--red";
+      }
+
+      const palette = [
+        "answerBtn--blue",
+        "answerBtn--green",
+        "answerBtn--yellow",
+        "answerBtn--red",
+        "answerBtn--purple",
+        "answerBtn--teal",
+        "answerBtn--slate"
+      ];
+
+      return palette[index % palette.length];
+    }
+
     function renderMulti(choices) {
       const buttons = choices.map((c, idx) => {
         const label = (c && (c.label || c.text)) ? (c.label || c.text) : ("Valg " + (idx + 1));
         const value = (c && c.id) ? c.id : label;
-        return `<button class="btn" data-v="${encodeURIComponent(String(value))}">${escapeHtml(label)}</button>`;
+        const btnClass = getMultiButtonClass(idx, choices.length);
+
+        return `
+          <button class="answerBtn ${btnClass}" data-v="${encodeURIComponent(String(value))}">
+            ${escapeHtml(label)}
+          </button>
+        `;
       }).join("");
 
       voteBox.innerHTML = `
         <strong>Velg ett svar</strong>
-        <div class="btnRow mt20" id="choiceRow">${buttons}</div>
+        <div class="answerGrid" id="choiceRow">${buttons}</div>
       `;
 
       document.getElementById("choiceRow").addEventListener("click", (ev) => {
@@ -525,10 +622,6 @@
         bootDone = true;
       }
     }
-
-    backBtn.addEventListener("click", () => {
-      redirectToJoin();
-    });
 
     boot();
   </script>
