@@ -52,6 +52,21 @@
       margin: 0 auto;
     }
 
+    /* Skjul msgBox når den er tom */
+    #msgBox:empty {
+      display: none;
+    }
+
+    /* Spørsmål */
+    #heroBox {
+      font-size: 2.2rem;
+      font-weight: 600;
+      text-align: center;
+      max-width: 900px;
+      margin: 40px auto 20px auto;
+      line-height: 1.3;
+    }
+
     @media (max-width: 700px) {
       .qrDock {
         right: 10px;
@@ -73,15 +88,18 @@
       .qrCodeText {
         font-size: 11px;
       }
+
+      #heroBox {
+        font-size: 1.6rem;
+        margin-top: 20px;
+      }
     }
   </style>
 </head>
 
 <body>
-  <h1>Plenum</h1>
-
   <div id="msgBox" class="mt20" aria-live="polite"></div>
-  
+
   <div id="heroBox" class="mt20">
     Venter på oppstart…
   </div>
@@ -232,7 +250,7 @@
 
     function renderHero(state) {
       if (!state) {
-        heroBox.innerHTML = `Venter på oppstart…`;
+        heroBox.innerHTML = `<span class="mono">Venter på oppstart…</span>`;
         return;
       }
 
@@ -242,7 +260,7 @@
 
       heroBox.innerHTML = questionText
         ? `<div>${escapeHtml(questionText)}</div>`
-        : `Venter på spørsmålsformulering…`;
+        : `<span class="mono">Venter på spørsmålsformulering…</span>`;
     }
 
     function clearResults() {
@@ -253,7 +271,7 @@
     }
 
     function renderStandby() {
-      heroBox.innerHTML = `Venter på oppstart…`;
+      heroBox.innerHTML = `<span class="mono">Venter på oppstart…</span>`;
 
       resultBox.innerHTML = `
         <strong>Venter på oppstart</strong><br>
