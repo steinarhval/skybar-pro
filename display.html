@@ -116,6 +116,7 @@
     <div class="qrTitle">Scan for å delta</div>
     <div id="qrBox"></div>
     <div class="qrCodeText mono" id="qrCodeText"></div>
+    <div class="qrText">Mobilen går rett til svarskjermen.</div>
   </div>
 
   <!-- Firebase SDK -->
@@ -370,12 +371,6 @@
 
         <div class="multiChart">
           ${barsHtml}
-        </div>
-
-        <div class="multiLegend">
-          ${showRealResults
-            ? "Søylene viser prosentvis fordeling av alle innsendte svar i denne runden."
-            : "Svaralternativene er klare. Resultatene vises når du bytter til results."}
         </div>
       `;
     }
