@@ -189,6 +189,7 @@
 
     let selectedValue = null;
     let pressedValue = null;
+    let hasSeenFirstRound = false;
 
     function setMsg(html) {
       msgBox.innerHTML = html || "";
@@ -450,12 +451,9 @@
 
     async function submitVote(mode, value) {
       if (!currentSessionId || !currentRoundId) return;
-
-      if (lockState !== "unlocked") {
-        return;
-      }
-
+      if (lockState !== "unlocked") return;
       if (isSubmitting) return;
+
       isSubmitting = true;
 
       async function trySendOnce() {
@@ -474,7 +472,7 @@
         if (!(res && res.already)) {
           setMsg('<strong>Takk.</strong><br><span class="mono">Svaret ditt er sendt.</span>');
         } else {
-          setMsg('<span class="mono">Du hadde allerede svart i denne runden.</span>');
+          setMsg('<strong>Merk.</strong><br><span class="mono">Du har allerede svart i denne runden.</span>');
         }
       } catch (e) {
         const msg = (e && e.message) ? String(e.message) : String(e);
@@ -506,7 +504,7 @@
             if (!(res2 && res2.already)) {
               setMsg('<strong>Takk.</strong><br><span class="mono">Svaret ditt er sendt.</span>');
             } else {
-              setMsg('<span class="mono">Du hadde allerede svart i denne runden.</span>');
+              setMsg('<strong>Merk.</strong><br><span class="mono">Du har allerede svart i denne runden.</span>');
             }
 
             return;
@@ -541,6 +539,10 @@
         (res) => {
           const prevLockState = lockState;
           lockState = (res && res.exists) ? "locked" : "unlocked";
+
+          if (lockState === "locked" && prevLockState !== "locked") {
+            setMsg('<strong>Merk.</strong><br><span class="mono">Du har allerede svart i denne runden.</span>');
+          }
 
           if (lockState === "unlocked" && prevLockState !== "unlocked") {
             selectedValue = null;
@@ -579,19 +581,27 @@
             currentRoundId = newRoundId;
             selectedValue = null;
             pressedValue = null;
-            setMsg("");
 
             if (currentRoundId) {
               attachLock(currentSessionId, currentRoundId);
+
+              if (hasSeenFirstRound) {
+                setMsg('<strong>Nytt spørsmål!</strong><br><span class="mono">Du kan svare nå.</span>');
+              } else {
+                setMsg('');
+                hasSeenFirstRound = true;
+              }
             } else {
               if (unsubLock) unsubLock();
               unsubLock = null;
               lockState = "none";
+              setMsg("");
             }
           }
 
           if (prevRoundId !== currentRoundId && currentRoundId) {
-            setMsg("");
+            renderVoteUI();
+            return;
           }
 
           renderVoteUI();
