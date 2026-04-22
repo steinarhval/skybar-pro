@@ -331,6 +331,7 @@
         return;
       }
 
+      const status = state && state.status ? state.status : null;
       const counts = (agg.counts && typeof agg.counts === "object") ? agg.counts : {};
       const n = (typeof agg.n === "number") ? agg.n : 0;
 
@@ -360,16 +361,19 @@
         return;
       }
 
+      const showRealResults = (status === "results");
+
       const barsHtml = entries.map((entry, idx) => {
         const pct = n > 0 ? Math.round((entry.count / n) * 100) : 0;
-        const heightPct = Math.max(pct, entry.count > 0 ? 4 : 0);
+        const visiblePct = showRealResults ? pct : 0;
+        const heightPct = Math.max(visiblePct, 0);
         const barClass = getMultiBarClass(idx, entries.length);
 
         return `
           <div class="multiBarWrap">
             <div class="multiBarValue">
-              ${pct} %
-              <span class="multiBarValueSub">${entry.count} svar</span>
+              ${showRealResults ? (visiblePct + " %") : "&nbsp;"}
+              <span class="multiBarValueSub">${showRealResults ? (entry.count + " svar") : "&nbsp;"}</span>
             </div>
             <div class="multiBarTrack">
               <div class="multiBar ${barClass}" style="height:${heightPct}%;"></div>
@@ -387,7 +391,9 @@
         </div>
 
         <div class="multiLegend">
-          Søylene viser prosentvis fordeling av alle innsendte svar i denne runden.
+          ${showRealResults
+            ? "Søylene viser prosentvis fordeling av alle innsendte svar i denne runden."
+            : "Svaralternativene er klare. Resultatene vises når du bytter til results."}
         </div>
       `;
     }
