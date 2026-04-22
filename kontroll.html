@@ -5,6 +5,137 @@
   <title>Kontroll</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="app.css" />
+  <style>
+    .presentationShell {
+      position: relative;
+      min-height: 520px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
+      padding: var(--space-6);
+      overflow: hidden;
+    }
+
+    .presentationMuted {
+      color: var(--color-text-soft);
+    }
+
+    .presentationQuestion {
+      font-size: clamp(1.4rem, 1.1rem + 1.5vw, 2.4rem);
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      color: var(--color-text);
+      margin-bottom: var(--space-5);
+      max-width: 900px;
+    }
+
+    .presentationMeta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: var(--space-5);
+      color: var(--color-text-soft);
+      font-size: 0.95rem;
+    }
+
+    .presentationMeta span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--color-surface-soft);
+      border: 1px solid var(--color-border);
+      border-radius: 999px;
+      padding: 6px 10px;
+    }
+
+    .presentationPlaceholder {
+      padding: var(--space-7) 0;
+      font-size: 1.05rem;
+      color: var(--color-text-soft);
+    }
+
+    .presentationFooter {
+      margin-top: var(--space-5);
+      color: var(--color-text-soft);
+      font-size: 0.95rem;
+    }
+
+    .presentationQrDock {
+      position: absolute;
+      right: 16px;
+      bottom: 16px;
+      background: #fff;
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 10px;
+      box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+      max-width: 180px;
+      z-index: 10;
+    }
+
+    .presentationQrDock.hidden {
+      display: none;
+    }
+
+    .presentationQrTitle {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .presentationQrText {
+      font-size: 12px;
+      margin-top: 8px;
+      line-height: 1.3;
+    }
+
+    .presentationQrCodeText {
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+
+    #presentationQrBox {
+      width: 140px;
+      min-height: 140px;
+    }
+
+    #presentationQrBox img,
+    #presentationQrBox canvas {
+      display: block;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 700px) {
+      .presentationShell {
+        padding: var(--space-4);
+        min-height: 420px;
+      }
+
+      .presentationQrDock {
+        right: 10px;
+        bottom: 10px;
+        padding: 8px;
+        max-width: 150px;
+      }
+
+      #presentationQrBox {
+        width: 120px;
+        min-height: 120px;
+      }
+
+      .presentationQrTitle {
+        font-size: 12px;
+      }
+
+      .presentationQrText,
+      .presentationQrCodeText {
+        font-size: 11px;
+      }
+    }
+  </style>
 </head>
 
 <body>
@@ -24,6 +155,8 @@
   <div id="sessionBox" class="mt20"></div>
   <div id="controlsBox" class="mt20"></div>
 
+  <div id="presentationBox" class="mt20"></div>
+
   <details id="techDetails" class="mt20">
     <summary><strong>Vis teknisk info</strong></summary>
     <div id="leaseBox" class="mt20"></div>
@@ -34,6 +167,9 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+  <!-- Lite QR-bibliotek -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
   <script src="config.js"></script>
   <script src="app.js"></script>
@@ -47,13 +183,21 @@
     const statusBox = document.getElementById("statusBox");
     const errorBox = document.getElementById("errorBox");
     const controlsBox = document.getElementById("controlsBox");
+    const presentationBox = document.getElementById("presentationBox");
 
     let activeSessionId = null;
     let activeJoinCode = null;
 
-    let unsubscribe = null;
+    let unsubscribeState = null;
+    let unsubscribeAgg = null;
     let leaseTicker = null;
+
     let lastState = null;
+    let lastAgg = null;
+    let currentAggRoundId = null;
+
+    let presentationQrInstance = null;
+    let lastPresentationQrUrl = null;
 
     function escapeHtml(s) {
       return String(s)
@@ -227,6 +371,59 @@
       document.body.removeChild(ta);
     }
 
+    function buildParticipantUrl(code) {
+      const u = new URL("innhenting.html", window.location.href);
+      u.searchParams.set("joinCode", String(code).toUpperCase());
+      return u.toString();
+    }
+
+    function clearPresentationQr() {
+      const qrBox = document.getElementById("presentationQrBox");
+      const qrCodeText = document.getElementById("presentationQrCodeText");
+      const qrDock = document.getElementById("presentationQrDock");
+
+      if (qrBox) qrBox.innerHTML = "";
+      if (qrCodeText) qrCodeText.textContent = "";
+      if (qrDock) qrDock.classList.add("hidden");
+
+      presentationQrInstance = null;
+      lastPresentationQrUrl = null;
+    }
+
+    function renderPresentationQr() {
+      const qrBox = document.getElementById("presentationQrBox");
+      const qrCodeText = document.getElementById("presentationQrCodeText");
+      const qrDock = document.getElementById("presentationQrDock");
+
+      if (!qrBox || !qrCodeText || !qrDock) return;
+
+      if (!activeJoinCode || !/^[A-Z0-9]{6}$/.test(activeJoinCode)) {
+        clearPresentationQr();
+        return;
+      }
+
+      const participantUrl = buildParticipantUrl(activeJoinCode);
+
+      if (participantUrl === lastPresentationQrUrl) {
+        qrCodeText.textContent = activeJoinCode;
+        qrDock.classList.remove("hidden");
+        return;
+      }
+
+      qrBox.innerHTML = "";
+      qrCodeText.textContent = activeJoinCode;
+      qrDock.classList.remove("hidden");
+
+      presentationQrInstance = new QRCode(qrBox, {
+        text: participantUrl,
+        width: 140,
+        height: 140,
+        correctLevel: QRCode.CorrectLevel.M
+      });
+
+      lastPresentationQrUrl = participantUrl;
+    }
+
     function renderSessionBox() {
       if (!activeSessionId) {
         sessionBox.innerHTML = `
@@ -360,7 +557,7 @@
         </div>
 
         <div class="mt20">
-          Tips: Normal flyt er <span class="mono">Oppdater spørsmål</span> → <span class="mono">Start ny runde</span> → <span class="mono">Collect/Results</span> → <span class="mono">Reset</span>.
+          Tips: <span class="mono">Space</span> = vis/skjul resultater, <span class="mono">N</span> = ny runde.
         </div>
       `;
 
@@ -470,8 +667,13 @@
           activeSessionId = null;
           activeJoinCode = null;
           lastState = null;
-          if (unsubscribe) unsubscribe();
-          unsubscribe = null;
+          lastAgg = null;
+          currentAggRoundId = null;
+
+          if (unsubscribeState) unsubscribeState();
+          if (unsubscribeAgg) unsubscribeAgg();
+          unsubscribeState = null;
+          unsubscribeAgg = null;
 
           sessionBox.innerHTML = `
             <strong>Aktiv session</strong><br>
@@ -482,6 +684,7 @@
             Ingen aktiv session akkurat nå.
           `;
           renderLease(null);
+          renderPresentation();
 
           setStatus("Session avsluttet.", "ok");
         } catch (err) {
@@ -493,6 +696,180 @@
       });
     }
 
+    function getStatusLine(status) {
+      if (status === "collect") return "Innsamling pågår";
+      if (status === "results") return "Resultater vises";
+      if (status === "paused") return "Pause";
+      if (status === "idle") return "Klar";
+      return status || "-";
+    }
+
+    function buildChoiceLabelMap(question) {
+      const map = {};
+      const q = question || {};
+      const choices = Array.isArray(q.choices) ? q.choices : [];
+      for (const c of choices) {
+        if (!c) continue;
+        const id = (c.id != null) ? String(c.id) : null;
+        const label = (c.label != null) ? String(c.label) : (id || "");
+        if (id) map[id] = label || id;
+      }
+      return map;
+    }
+
+    function getMultiBarClass(index, total) {
+      if (total === 2) {
+        return index === 0 ? "multiBar--green" : "multiBar--red";
+      }
+
+      if (total === 3) {
+        if (index === 0) return "multiBar--green";
+        if (index === 1) return "multiBar--yellow";
+        return "multiBar--red";
+      }
+
+      const palette = [
+        "multiBar--blue",
+        "multiBar--green",
+        "multiBar--yellow",
+        "multiBar--red",
+        "multiBar--purple",
+        "multiBar--teal",
+        "multiBar--slate"
+      ];
+
+      return palette[index % palette.length];
+    }
+
+    function renderPresentation() {
+      if (!activeSessionId) {
+        presentationBox.innerHTML = `
+          <div class="presentationShell">
+            <div class="presentationQuestion">Ingen aktiv session.</div>
+            <div class="presentationPlaceholder">Start en session for å vise presentasjonsmodus her.</div>
+          </div>
+        `;
+        clearPresentationQr();
+        return;
+      }
+
+      const state = lastState;
+      const agg = lastAgg;
+
+      if (!state) {
+        presentationBox.innerHTML = `
+          <div class="presentationShell">
+            <div class="presentationQuestion">Venter på state…</div>
+            <div class="presentationPlaceholder">Presentasjonsvisningen kobler seg til aktiv session.</div>
+            <div id="presentationQrDock" class="presentationQrDock hidden">
+              <div class="presentationQrTitle">Scan for å delta</div>
+              <div id="presentationQrBox"></div>
+              <div class="presentationQrCodeText mono" id="presentationQrCodeText"></div>
+              <div class="presentationQrText">Mobilen går rett til svarskjermen.</div>
+            </div>
+          </div>
+        `;
+        renderPresentationQr();
+        return;
+      }
+
+      const status = state.status || null;
+      const mode = state.mode || null;
+      const roundId = state.roundId || null;
+      const question = state.question || null;
+      const questionText = question && question.text ? String(question.text).trim() : "";
+
+      let contentHtml = "";
+
+      if (mode !== "multi") {
+        contentHtml = `
+          <div class="presentationPlaceholder">
+            Denne presentasjonsvisningen er foreløpig laget for <span class="mono">multi</span>.<br>
+            Nåværende modus: <span class="mono">${escapeHtml(mode || "-")}</span>
+          </div>
+        `;
+      } else if (!roundId) {
+        contentHtml = `
+          <div class="presentationPlaceholder">
+            Venter på aktiv runde…
+          </div>
+        `;
+      } else {
+        const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
+        const n = (agg && typeof agg.n === "number") ? agg.n : 0;
+        const labelMap = buildChoiceLabelMap(question);
+        const qChoices = (question && Array.isArray(question.choices)) ? question.choices : [];
+
+        const entries = qChoices.map((c, idx) => {
+          const id = (c && c.id != null) ? String(c.id) : ("choice_" + (idx + 1));
+          const label = (c && (c.label || c.text)) ? String(c.label || c.text) : (labelMap[id] || id);
+          const count = (typeof counts[id] === "number") ? counts[id] : 0;
+          return { id, label, count };
+        });
+
+        if (!entries.length) {
+          contentHtml = `
+            <div class="presentationPlaceholder">
+              Ingen svaralternativer å vise.
+            </div>
+          `;
+        } else {
+          const barsHtml = entries.map((entry, idx) => {
+            const pct = n > 0 ? Math.round((entry.count / n) * 100) : 0;
+            const heightPct = Math.max(pct, entry.count > 0 ? 4 : 0);
+            const barClass = getMultiBarClass(idx, entries.length);
+
+            return `
+              <div class="multiBarWrap">
+                <div class="multiBarValue">
+                  ${pct} %
+                  <span class="multiBarValueSub">${entry.count} svar</span>
+                </div>
+                <div class="multiBarTrack">
+                  <div class="multiBar ${barClass}" style="height:${heightPct}%;"></div>
+                </div>
+                <div class="multiBarLabel">${escapeHtml(entry.label)}</div>
+              </div>
+            `;
+          }).join("");
+
+          contentHtml = `
+            <div class="multiChart">
+              ${barsHtml}
+            </div>
+            <div class="presentationFooter">
+              Fordeling av alle innsendte svar i denne runden. Totalt: <span class="mono">${n}</span>
+            </div>
+          `;
+        }
+      }
+
+      presentationBox.innerHTML = `
+        <div class="presentationShell">
+          <div class="presentationMeta">
+            <span><strong>Status:</strong> ${escapeHtml(getStatusLine(status))}</span>
+            <span><strong>Mode:</strong> <span class="mono">${escapeHtml(mode || "-")}</span></span>
+            <span><strong>Runde:</strong> <span class="mono">${escapeHtml(roundId || "-")}</span></span>
+          </div>
+
+          <div class="presentationQuestion">
+            ${questionText ? escapeHtml(questionText) : "Venter på spørsmålsformulering…"}
+          </div>
+
+          ${contentHtml}
+
+          <div id="presentationQrDock" class="presentationQrDock hidden">
+            <div class="presentationQrTitle">Scan for å delta</div>
+            <div id="presentationQrBox"></div>
+            <div class="presentationQrCodeText mono" id="presentationQrCodeText"></div>
+            <div class="presentationQrText">Mobilen går rett til svarskjermen.</div>
+          </div>
+        </div>
+      `;
+
+      renderPresentationQr();
+    }
+
     function startLeaseTicker() {
       if (leaseTicker) clearInterval(leaseTicker);
       leaseTicker = setInterval(() => {
@@ -500,15 +877,55 @@
       }, 1000);
     }
 
-    function attachStateListener(sessionId) {
-      if (unsubscribe) unsubscribe();
+    function detachAgg() {
+      if (unsubscribeAgg) unsubscribeAgg();
+      unsubscribeAgg = null;
+      lastAgg = null;
+      currentAggRoundId = null;
+    }
 
-      unsubscribe = App.listenLiveState(
+    function attachAgg(sessionId, roundId) {
+      if (unsubscribeAgg) unsubscribeAgg();
+
+      unsubscribeAgg = App.listenAgg(
+        sessionId,
+        roundId,
+        (agg) => {
+          lastAgg = agg;
+          currentAggRoundId = roundId;
+          renderPresentation();
+        },
+        (err) => {
+          setError("Kunne ikke lese agg/live: " + (err && err.message ? err.message : String(err)));
+          setStatus("Kunne ikke lese agg/live.", "err");
+        }
+      );
+    }
+
+    function attachStateListener(sessionId) {
+      if (unsubscribeState) unsubscribeState();
+
+      unsubscribeState = App.listenLiveState(
         sessionId,
         (data) => {
           lastState = data;
           renderLease(data);
           renderControls();
+
+          const newRoundId = data && data.roundId ? data.roundId : null;
+          const mode = data && data.mode ? data.mode : null;
+
+          if (!newRoundId || mode !== "multi") {
+            detachAgg();
+            renderPresentation();
+            return;
+          }
+
+          if (newRoundId !== currentAggRoundId) {
+            attachAgg(sessionId, newRoundId);
+          } else {
+            renderPresentation();
+          }
         },
         (err) => {
           setError("Kunne ikke lese state/live: " + (err && err.message ? err.message : String(err)));
@@ -518,6 +935,59 @@
 
       startLeaseTicker();
     }
+
+    async function toggleResultsShortcut() {
+      if (!activeSessionId || !lastState) return;
+
+      const current = lastState.status || "collect";
+      const next = current === "results" ? "collect" : "results";
+
+      try {
+        setError("");
+        await App.setLiveStatusLease(activeSessionId, next);
+        setStatus(next === "results" ? "Resultater vises." : "Resultater skjules.", "ok");
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        setError(msg);
+        setStatus("Shortcut feilet.", "err");
+      }
+    }
+
+    async function newRoundShortcut() {
+      if (!activeSessionId) return;
+
+      try {
+        setError("");
+        const res = await App.resetRoundLease(activeSessionId);
+        setStatus("Ny runde startet: " + res.roundId, "ok");
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        setError(msg);
+        setStatus("Ny runde feilet.", "err");
+      }
+    }
+
+    function shouldIgnoreHotkeys(target) {
+      if (!target) return false;
+      const tag = target.tagName ? target.tagName.toLowerCase() : "";
+      return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+    }
+
+    document.addEventListener("keydown", async (ev) => {
+      if (shouldIgnoreHotkeys(ev.target)) return;
+      if (!activeSessionId) return;
+
+      if (ev.code === "Space") {
+        ev.preventDefault();
+        await toggleResultsShortcut();
+        return;
+      }
+
+      if (ev.key === "n" || ev.key === "N") {
+        ev.preventDefault();
+        await newRoundShortcut();
+      }
+    });
 
     loginBtn.addEventListener("click", async () => {
       try {
@@ -541,8 +1011,12 @@
 
         activeSessionId = res.sessionId;
         activeJoinCode = res.joinCode;
+        lastState = null;
+        lastAgg = null;
+        currentAggRoundId = null;
 
         renderSessionBox();
+        renderPresentation();
         attachStateListener(res.sessionId);
         setStatus("Ny session startet.", "ok");
       } catch (err) {
@@ -560,8 +1034,14 @@
         activeSessionId = null;
         activeJoinCode = null;
         lastState = null;
-        if (unsubscribe) unsubscribe();
-        unsubscribe = null;
+        lastAgg = null;
+        currentAggRoundId = null;
+
+        if (unsubscribeState) unsubscribeState();
+        if (unsubscribeAgg) unsubscribeAgg();
+        unsubscribeState = null;
+        unsubscribeAgg = null;
+
         if (leaseTicker) clearInterval(leaseTicker);
         leaseTicker = null;
 
@@ -578,6 +1058,7 @@
           Logg inn for å starte eller laste en session.
         `;
         statusBox.innerHTML = "";
+        renderPresentation();
         setError("");
         return;
       }
@@ -591,17 +1072,23 @@
           activeJoinCode = info.activeJoinCode;
 
           renderSessionBox();
+          renderPresentation();
           attachStateListener(info.activeSessionId);
           setStatus("Aktiv session lastet.", "ok");
         } else {
           activeSessionId = null;
           activeJoinCode = null;
+          lastState = null;
+          lastAgg = null;
+          currentAggRoundId = null;
+
           renderSessionBox();
           leaseBox.innerHTML = `
             <strong>Controller lease</strong><br>
             Ingen aktiv session funnet på owner-peker.
           `;
           renderControls();
+          renderPresentation();
           setStatus("Ingen aktiv session funnet.", "warn");
         }
       } catch (e) {
@@ -610,6 +1097,8 @@
         console.error(e);
       }
     });
+
+    renderPresentation();
   </script>
 </body>
 </html>
