@@ -52,12 +52,10 @@
       margin: 0 auto;
     }
 
-    /* Skjul msgBox når den er tom */
     #msgBox:empty {
       display: none;
     }
 
-    /* Spørsmål */
     #heroBox {
       font-size: 2.2rem;
       font-weight: 600;
@@ -105,7 +103,6 @@
   </div>
 
   <div id="resultBox" class="mt20">
-    <strong>Resultat</strong><br>
     Venter på aktiv runde…
   </div>
 
@@ -264,17 +261,13 @@
     }
 
     function clearResults() {
-      resultBox.innerHTML = `
-        <strong>Resultat</strong><br>
-        Ingen data å vise akkurat nå.
-      `;
+      resultBox.innerHTML = `Ingen data å vise akkurat nå.`;
     }
 
     function renderStandby() {
       heroBox.innerHTML = `<span class="mono">Venter på oppstart…</span>`;
 
       resultBox.innerHTML = `
-        <strong>Venter på oppstart</strong><br>
         Denne skjermen er klar, men det er ingen aktiv kobling akkurat nå.<br><br>
         Åpne display med:<br>
         <span class="mono">display.html?joinCode=ABC123</span><br>
@@ -284,34 +277,15 @@
     }
 
     function renderLoadingState() {
-      resultBox.innerHTML = `
-        <strong>Resultat</strong><br>
-        Laster <span class="mono">state/live</span>…
-      `;
+      resultBox.innerHTML = `Laster <span class="mono">state/live</span>…`;
     }
 
     function renderWaitingForRound() {
-      resultBox.innerHTML = `
-        <strong>Resultat</strong><br>
-        State er lastet, men venter på aktiv <span class="mono">roundId</span>…
-      `;
+      resultBox.innerHTML = `Venter på aktiv <span class="mono">roundId</span>…`;
     }
 
-    function renderMissingAgg(mode, roundId, status) {
-      const statusLine = (status === "collect")
-        ? `Innsamling pågår (<span class="mono">collect</span>)`
-        : (status === "results")
-          ? `Resultater vises (<span class="mono">results</span>)`
-          : (status === "paused")
-            ? `Pause (<span class="mono">paused</span>)`
-            : `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
-
-      resultBox.innerHTML = `
-        <strong>Resultat (${escapeHtml((mode || "-").toUpperCase())})</strong><br>
-        ${statusLine}<br>
-        roundId: <span class="mono">${escapeHtml(roundId || "-")}</span><br><br>
-        Ingen aggregert data ennå.
-      `;
+    function renderMissingAgg() {
+      resultBox.innerHTML = `Ingen aggregert data ennå.`;
     }
 
     function buildChoiceLabelMap(question) {
@@ -325,19 +299,6 @@
         if (id) map[id] = label || id;
       }
       return map;
-    }
-
-    function getStatusLine(status) {
-      if (status === "collect") {
-        return `Innsamling pågår (<span class="mono">collect</span>)`;
-      }
-      if (status === "results") {
-        return `Resultater vises (<span class="mono">results</span>)`;
-      }
-      if (status === "paused") {
-        return `Pause (<span class="mono">paused</span>)`;
-      }
-      return `Status: <span class="mono">${escapeHtml(status || "-")}</span>`;
     }
 
     function getMultiBarClass(index, total) {
@@ -365,11 +326,8 @@
     }
 
     function renderMulti(state, agg) {
-      const status = state.status || null;
-      const roundId = state.roundId || null;
-
       if (!agg) {
-        renderMissingAgg("multi", roundId, status);
+        renderMissingAgg();
         return;
       }
 
@@ -398,7 +356,7 @@
       }
 
       if (!entries.length) {
-        renderMissingAgg("multi", roundId, status);
+        renderMissingAgg();
         return;
       }
 
@@ -422,10 +380,7 @@
       }).join("");
 
       resultBox.innerHTML = `
-        <strong>Resultat (MULTI)</strong><br>
-        ${getStatusLine(status)}<br>
-        roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
-        n: <span class="mono">${n}</span><br>
+        <div><strong>n:</strong> <span class="mono">${n}</span></div>
 
         <div class="multiChart">
           ${barsHtml}
@@ -438,11 +393,8 @@
     }
 
     function renderLikert(state, agg) {
-      const status = state.status || null;
-      const roundId = state.roundId || null;
-
       if (!agg) {
-        renderMissingAgg("likert", roundId, status);
+        renderMissingAgg();
         return;
       }
 
@@ -452,22 +404,16 @@
       const avg = count > 0 ? (sum / count) : 0;
 
       resultBox.innerHTML = `
-        <strong>Resultat (LIKERT)</strong><br>
-        ${getStatusLine(status)}<br>
-        roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
-        n: <span class="mono">${n}</span><br>
-        count: <span class="mono">${count}</span><br>
-        sum: <span class="mono">${sum}</span><br>
-        snitt: <span class="mono">${count > 0 ? avg.toFixed(2) : "-"}</span>
+        <div><strong>n:</strong> <span class="mono">${n}</span></div>
+        <div class="mt20"><strong>count:</strong> <span class="mono">${count}</span></div>
+        <div><strong>sum:</strong> <span class="mono">${sum}</span></div>
+        <div><strong>snitt:</strong> <span class="mono">${count > 0 ? avg.toFixed(2) : "-"}</span></div>
       `;
     }
 
     function renderOpen(state, agg) {
-      const status = state.status || null;
-      const roundId = state.roundId || null;
-
       if (!agg) {
-        renderMissingAgg("open", roundId, status);
+        renderMissingAgg();
         return;
       }
 
@@ -482,13 +428,9 @@
       }
 
       resultBox.innerHTML = `
-        <strong>Resultat (OPEN)</strong><br>
-        ${getStatusLine(status)}<br>
-        roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
-        n: <span class="mono">${n}</span><br>
+        <div><strong>n:</strong> <span class="mono">${n}</span></div>
 
         <div class="mt20">
-          <strong>Svar</strong>
           <ol class="mt20">
             ${items}
           </ol>
@@ -497,11 +439,8 @@
     }
 
     function renderWordcloud(state, agg) {
-      const status = state.status || null;
-      const roundId = state.roundId || null;
-
       if (!agg) {
-        renderMissingAgg("wordcloud", roundId, status);
+        renderMissingAgg();
         return;
       }
 
@@ -521,10 +460,7 @@
       }
 
       resultBox.innerHTML = `
-        <strong>Resultat (WORDCLOUD)</strong><br>
-        ${getStatusLine(status)}<br>
-        roundId: <span class="mono">${escapeHtml(roundId)}</span><br>
-        n: <span class="mono">${n}</span><br>
+        <div><strong>n:</strong> <span class="mono">${n}</span></div>
 
         <table class="mt20">
           <thead><tr><th>Ord</th><th>Antall</th></tr></thead>
@@ -543,10 +479,7 @@
       const roundId = state.roundId || null;
 
       if (!mode) {
-        resultBox.innerHTML = `
-          <strong>Resultat</strong><br>
-          Ingen modus valgt ennå.
-        `;
+        resultBox.innerHTML = `Ingen modus valgt ennå.`;
         return;
       }
 
@@ -575,10 +508,7 @@
         return;
       }
 
-      resultBox.innerHTML = `
-        <strong>Resultat</strong><br>
-        Ukjent modus: <span class="mono">${escapeHtml(mode)}</span>
-      `;
+      resultBox.innerHTML = `Ukjent modus: <span class="mono">${escapeHtml(mode)}</span>`;
     }
 
     function render() {
