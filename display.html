@@ -284,10 +284,6 @@
       resultBox.innerHTML = `Venter på aktiv <span class="mono">roundId</span>…`;
     }
 
-    function renderMissingAgg() {
-      resultBox.innerHTML = `Ingen aggregert data ennå.`;
-    }
-
     function buildChoiceLabelMap(question) {
       const map = {};
       const q = question || {};
@@ -326,40 +322,27 @@
     }
 
     function renderMulti(state, agg) {
-      if (!agg) {
-        renderMissingAgg();
+      const status = state && state.status ? state.status : null;
+      const qChoices = (state && state.question && Array.isArray(state.question.choices))
+        ? state.question.choices
+        : [];
+
+      if (!qChoices.length) {
+        resultBox.innerHTML = `Ingen svaralternativer å vise.`;
         return;
       }
 
-      const status = state && state.status ? state.status : null;
-      const counts = (agg.counts && typeof agg.counts === "object") ? agg.counts : {};
-      const n = (typeof agg.n === "number") ? agg.n : 0;
+      const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
+      const n = (agg && typeof agg.n === "number") ? agg.n : 0;
 
       const labelMap = buildChoiceLabelMap(state.question);
-      const qChoices = (state.question && Array.isArray(state.question.choices)) ? state.question.choices : [];
-      const haveChoiceList = qChoices.length >= 2;
 
-      let entries = [];
-
-      if (haveChoiceList) {
-        entries = qChoices.map((c, idx) => {
-          const id = (c && c.id != null) ? String(c.id) : ("choice_" + (idx + 1));
-          const label = (c && (c.label || c.text)) ? String(c.label || c.text) : (labelMap[id] || id);
-          const count = (typeof counts[id] === "number") ? counts[id] : 0;
-          return { id, label, count };
-        });
-      } else {
-        entries = Object.entries(counts).map(([id, count]) => ({
-          id: String(id),
-          label: labelMap[String(id)] || String(id),
-          count: typeof count === "number" ? count : 0
-        }));
-      }
-
-      if (!entries.length) {
-        renderMissingAgg();
-        return;
-      }
+      const entries = qChoices.map((c, idx) => {
+        const id = (c && c.id != null) ? String(c.id) : ("choice_" + (idx + 1));
+        const label = (c && (c.label || c.text)) ? String(c.label || c.text) : (labelMap[id] || id);
+        const count = (typeof counts[id] === "number") ? counts[id] : 0;
+        return { id, label, count };
+      });
 
       const showRealResults = (status === "results");
 
@@ -400,7 +383,7 @@
 
     function renderLikert(state, agg) {
       if (!agg) {
-        renderMissingAgg();
+        resultBox.innerHTML = `<div><strong>n:</strong> <span class="mono">0</span></div>`;
         return;
       }
 
@@ -419,7 +402,7 @@
 
     function renderOpen(state, agg) {
       if (!agg) {
-        renderMissingAgg();
+        resultBox.innerHTML = `<div><strong>n:</strong> <span class="mono">0</span></div>`;
         return;
       }
 
@@ -446,7 +429,13 @@
 
     function renderWordcloud(state, agg) {
       if (!agg) {
-        renderMissingAgg();
+        resultBox.innerHTML = `
+          <div><strong>n:</strong> <span class="mono">0</span></div>
+          <table class="mt20">
+            <thead><tr><th>Ord</th><th>Antall</th></tr></thead>
+            <tbody><tr><td>(ingen ord ennå)</td><td class="mono">0</td></tr></tbody>
+          </table>
+        `;
         return;
       }
 
