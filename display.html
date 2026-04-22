@@ -83,7 +83,6 @@
   <div id="msgBox" class="mt20" aria-live="polite"></div>
 
   <div id="heroBox" class="mt20">
-    <strong>Spørsmål</strong><br>
     Venter på oppstart…
   </div>
 
@@ -233,41 +232,17 @@
 
     function renderHero(state) {
       if (!state) {
-        heroBox.innerHTML = `
-          <strong>Spørsmål</strong><br>
-          Venter på oppstart…
-        `;
+        heroBox.innerHTML = `Venter på oppstart…`;
         return;
       }
 
-      const status = state.status || null;
-      const mode = state.mode || null;
-      const roundId = state.roundId || null;
       const questionText = state.question && state.question.text
         ? String(state.question.text).trim()
         : "";
 
-      const statusText = status ? String(status) : "-";
-      const modeText = mode ? String(mode).toUpperCase() : "-";
-
-      if (!questionText) {
-        heroBox.innerHTML = `
-          <strong>Spørsmål</strong><br>
-          <span class="mono">Mode:</span> ${escapeHtml(modeText)}<br>
-          <span class="mono">Status:</span> ${escapeHtml(statusText)}<br>
-          <span class="mono">Runde:</span> ${escapeHtml(roundId || "-")}<br><br>
-          Venter på spørsmålsformulering…
-        `;
-        return;
-      }
-
-      heroBox.innerHTML = `
-        <strong>Spørsmål</strong><br>
-        <span class="mono">Mode:</span> ${escapeHtml(modeText)}<br>
-        <span class="mono">Status:</span> ${escapeHtml(statusText)}<br>
-        <span class="mono">Runde:</span> ${escapeHtml(roundId || "-")}<br><br>
-        <div>${escapeHtml(questionText)}</div>
-      `;
+      heroBox.innerHTML = questionText
+        ? `<div>${escapeHtml(questionText)}</div>`
+        : `Venter på spørsmålsformulering…`;
     }
 
     function clearResults() {
@@ -278,10 +253,7 @@
     }
 
     function renderStandby() {
-      heroBox.innerHTML = `
-        <strong>Spørsmål</strong><br>
-        Venter på oppstart…
-      `;
+      heroBox.innerHTML = `Venter på oppstart…`;
 
       resultBox.innerHTML = `
         <strong>Venter på oppstart</strong><br>
