@@ -41,68 +41,86 @@
     .answerBtn {
       min-height: 84px;
       border-radius: 14px;
-      border: 1px solid var(--color-border);
+      border: 2px solid transparent;
       font-size: 1.1rem;
-      font-weight: 600;
+      font-weight: 700;
       padding: 16px 18px;
       text-align: center;
       cursor: pointer;
-      transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease, filter 120ms ease;
+      transition:
+        transform 120ms ease,
+        box-shadow 120ms ease,
+        opacity 120ms ease,
+        filter 120ms ease,
+        border-color 120ms ease,
+        background-color 120ms ease;
       color: #142033;
       background: #f3f6fa;
+      box-shadow: 0 2px 10px rgba(16, 24, 40, 0.06);
     }
 
     .answerBtn:hover {
       transform: translateY(-1px);
-      box-shadow: var(--shadow-sm);
+      box-shadow: 0 8px 18px rgba(16, 24, 40, 0.10);
     }
 
-    .answerBtn:active {
+    .answerBtn:active,
+    .answerBtn.is-pressed {
       transform: translateY(0);
+      box-shadow: inset 0 0 0 999px rgba(255,255,255,0.08);
     }
 
-    .answerBtn[disabled],
-    .answerBtn.is-locked {
-      opacity: 0.45;
+    .answerBtn[disabled] {
       cursor: not-allowed;
+    }
+
+    .answerBtn.is-selected {
+      border-color: #142033;
+      box-shadow:
+        0 0 0 3px rgba(20, 32, 51, 0.12),
+        0 8px 18px rgba(16, 24, 40, 0.10);
+      opacity: 1;
+    }
+
+    .answerBtn.is-dimmed {
+      opacity: 0.38;
       box-shadow: none;
-      transform: none;
       filter: grayscale(0.08);
     }
 
     .answerBtn--green {
-      background: rgba(91, 143, 114, 0.18);
-      border-color: rgba(91, 143, 114, 0.34);
+      background: rgba(91, 143, 114, 0.34);
+      border-color: rgba(91, 143, 114, 0.46);
     }
 
     .answerBtn--yellow {
-      background: rgba(201, 162, 74, 0.18);
-      border-color: rgba(201, 162, 74, 0.34);
+      background: rgba(201, 162, 74, 0.34);
+      border-color: rgba(201, 162, 74, 0.46);
     }
 
     .answerBtn--red {
-      background: rgba(184, 92, 78, 0.18);
-      border-color: rgba(184, 92, 78, 0.34);
+      background: rgba(184, 92, 78, 0.34);
+      border-color: rgba(184, 92, 78, 0.46);
     }
 
     .answerBtn--blue {
-      background: rgba(93, 127, 163, 0.18);
-      border-color: rgba(93, 127, 163, 0.34);
+      background: rgba(93, 127, 163, 0.30);
+      border-color: rgba(93, 127, 163, 0.42);
     }
 
     .answerBtn--purple {
-      background: rgba(138, 111, 168, 0.18);
-      border-color: rgba(138, 111, 168, 0.34);
+      background: rgba(138, 111, 168, 0.30);
+      border-color: rgba(138, 111, 168, 0.42);
     }
 
     .answerBtn--teal {
-      background: rgba(79, 143, 149, 0.18);
-      border-color: rgba(79, 143, 149, 0.34);
+      background: rgba(79, 143, 149, 0.30);
+      border-color: rgba(79, 143, 149, 0.42);
     }
 
     .answerBtn--slate {
-      background: rgba(122, 135, 152, 0.18);
-      border-color: rgba(122, 135, 152, 0.34);
+      background: rgba(122, 135, 152, 0.30);
+      border-color: rgba(122, 135, 152, 0.42);
     }
 
     @media (max-width: 700px) {
@@ -163,14 +181,14 @@
     let currentQuestion = null;
     let currentStatus = null;
 
-    // lockState: "none" | "unknown" | "unlocked" | "locked"
     let lockState = "none";
-
     let bootDone = false;
     let reconnectTimer = null;
     let lastReconnectAt = 0;
-
     let isSubmitting = false;
+
+    let selectedValue = null;
+    let pressedValue = null;
 
     function setMsg(html) {
       msgBox.innerHTML = html || "";
@@ -258,22 +276,6 @@
       voteBox.innerHTML = `<span class="mono">Sjekker om du allerede har svart…</span>`;
     }
 
-    function setVoteUILockedAlready() {
-      if (currentMode === "multi") {
-        const q = currentQuestion || {};
-        const choices = Array.isArray(q.choices) ? q.choices : null;
-        if (choices && choices.length >= 2) {
-          renderMulti(choices, true);
-          return;
-        }
-      }
-
-      voteBox.innerHTML = `
-        <strong>Svar registrert</strong><br>
-        <span class="mono">Du har allerede svart i denne runden.</span>
-      `;
-    }
-
     function renderPaused() {
       if (currentMode === "multi") {
         const q = currentQuestion || {};
@@ -295,11 +297,24 @@
         const label = (c && (c.label || c.text)) ? (c.label || c.text) : ("Valg " + (idx + 1));
         const value = (c && c.id) ? c.id : label;
         const btnClass = getMultiButtonClass(idx, choices.length);
+
+        const isSelected = selectedValue !== null && String(selectedValue) === String(value);
+        const isDimmed = isLocked && selectedValue !== null && !isSelected;
+        const isPressed = pressedValue !== null && String(pressedValue) === String(value);
+
+        const stateClasses = [
+          isSelected ? "is-selected" : "",
+          isDimmed ? "is-dimmed" : "",
+          isPressed ? "is-pressed" : ""
+        ].filter(Boolean).join(" ");
+
         const disabledAttr = isLocked ? "disabled" : "";
-        const lockedClass = isLocked ? "is-locked" : "";
 
         return `
-          <button class="answerBtn ${btnClass} ${lockedClass}" data-v="${encodeURIComponent(String(value))}" ${disabledAttr}>
+          <button
+            class="answerBtn ${btnClass} ${stateClasses}"
+            data-v="${encodeURIComponent(String(value))}"
+            ${disabledAttr}>
             ${escapeHtml(label)}
           </button>
         `;
@@ -314,7 +329,11 @@
         document.getElementById("choiceRow").addEventListener("click", (ev) => {
           const btn = ev.target.closest("button[data-v]");
           if (!btn) return;
+
           const v = decodeURIComponent(btn.getAttribute("data-v"));
+          pressedValue = v;
+          selectedValue = v;
+          renderVoteUI();
           submitVote("multi", v);
         });
       }
@@ -433,8 +452,6 @@
       if (!currentSessionId || !currentRoundId) return;
 
       if (lockState !== "unlocked") {
-        setMsg("");
-        setVoteUILockedAlready();
         return;
       }
 
@@ -451,6 +468,7 @@
         const res = await trySendOnce();
 
         lockState = "locked";
+        pressedValue = null;
         renderVoteUI();
 
         if (!(res && res.already)) {
@@ -482,6 +500,7 @@
             const res2 = await trySendOnce();
 
             lockState = "locked";
+            pressedValue = null;
             renderVoteUI();
 
             if (!(res2 && res2.already)) {
@@ -493,10 +512,14 @@
             return;
           } catch (e2) {
             const msg2 = (e2 && e2.message) ? String(e2.message) : String(e2);
+            pressedValue = null;
             setMsg('<strong>Kunne ikke sende svar.</strong><br><span class="mono">' + escapeHtml(msg2) + "</span>");
+            renderVoteUI();
           }
         } else {
+          pressedValue = null;
           setMsg('<strong>Kunne ikke sende svar.</strong><br><span class="mono">' + escapeHtml(msg) + "</span>");
+          renderVoteUI();
         }
       } finally {
         isSubmitting = false;
@@ -520,6 +543,8 @@
           lockState = (res && res.exists) ? "locked" : "unlocked";
 
           if (lockState === "unlocked" && prevLockState !== "unlocked") {
+            selectedValue = null;
+            pressedValue = null;
             setMsg("");
           }
 
@@ -552,6 +577,9 @@
 
           if (newRoundId !== currentRoundId) {
             currentRoundId = newRoundId;
+            selectedValue = null;
+            pressedValue = null;
+            setMsg("");
 
             if (currentRoundId) {
               attachLock(currentSessionId, currentRoundId);
@@ -559,7 +587,6 @@
               if (unsubLock) unsubLock();
               unsubLock = null;
               lockState = "none";
-              setMsg("");
             }
           }
 
