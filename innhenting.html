@@ -25,6 +25,12 @@
       margin-right: auto;
     }
 
+    #msgBox {
+      max-width: 960px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
     .answerGrid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -41,7 +47,7 @@
       padding: 16px 18px;
       text-align: center;
       cursor: pointer;
-      transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+      transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease, filter 120ms ease;
       color: #142033;
       background: #f3f6fa;
     }
@@ -53,6 +59,15 @@
 
     .answerBtn:active {
       transform: translateY(0);
+    }
+
+    .answerBtn[disabled],
+    .answerBtn.is-locked {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+      filter: grayscale(0.08);
     }
 
     .answerBtn--green {
@@ -109,8 +124,6 @@
 </head>
 
 <body>
-  <div id="msgBox" class="mt20" aria-live="polite"></div>
-
   <div id="questionBox" class="mt20">
     Venter på spørsmål…
   </div>
@@ -118,6 +131,8 @@
   <div id="voteBox" class="mt20">
     Venter på aktiv runde…
   </div>
+
+  <div id="msgBox" class="mt20" aria-live="polite"></div>
 
   <details id="techDetails" class="mt20">
     <summary><strong>Vis teknisk info</strong></summary>
@@ -211,30 +226,6 @@
         : `<span class="mono">Venter på spørsmålsformulering…</span>`;
     }
 
-    function setVoteUIWaiting() {
-      voteBox.innerHTML = `Venter på aktiv runde og spørsmål…`;
-    }
-
-    function setVoteUICheckingLock() {
-      voteBox.innerHTML = `
-        <span class="mono">Sjekker om du allerede har svart…</span>
-      `;
-    }
-
-    function setVoteUILockedAlready() {
-      voteBox.innerHTML = `
-        <strong>Svar registrert</strong><br>
-        <span class="mono">Du har allerede svart i denne runden.</span>
-      `;
-    }
-
-    function renderPaused() {
-      voteBox.innerHTML = `
-        <strong>Pause</strong><br>
-        Innsamlingen er satt på pause akkurat nå.
-      `;
-    }
-
     function getMultiButtonClass(index, total) {
       if (total === 2) {
         return index === 0 ? "answerBtn--green" : "answerBtn--red";
@@ -259,14 +250,56 @@
       return palette[index % palette.length];
     }
 
-    function renderMulti(choices) {
+    function setVoteUIWaiting() {
+      voteBox.innerHTML = `Venter på aktiv runde og spørsmål…`;
+    }
+
+    function setVoteUICheckingLock() {
+      voteBox.innerHTML = `<span class="mono">Sjekker om du allerede har svart…</span>`;
+    }
+
+    function setVoteUILockedAlready() {
+      if (currentMode === "multi") {
+        const q = currentQuestion || {};
+        const choices = Array.isArray(q.choices) ? q.choices : null;
+        if (choices && choices.length >= 2) {
+          renderMulti(choices, true);
+          return;
+        }
+      }
+
+      voteBox.innerHTML = `
+        <strong>Svar registrert</strong><br>
+        <span class="mono">Du har allerede svart i denne runden.</span>
+      `;
+    }
+
+    function renderPaused() {
+      if (currentMode === "multi") {
+        const q = currentQuestion || {};
+        const choices = Array.isArray(q.choices) ? q.choices : null;
+        if (choices && choices.length >= 2) {
+          renderMulti(choices, true);
+          return;
+        }
+      }
+
+      voteBox.innerHTML = `
+        <strong>Pause</strong><br>
+        Innsamlingen er satt på pause akkurat nå.
+      `;
+    }
+
+    function renderMulti(choices, isLocked = false) {
       const buttons = choices.map((c, idx) => {
         const label = (c && (c.label || c.text)) ? (c.label || c.text) : ("Valg " + (idx + 1));
         const value = (c && c.id) ? c.id : label;
         const btnClass = getMultiButtonClass(idx, choices.length);
+        const disabledAttr = isLocked ? "disabled" : "";
+        const lockedClass = isLocked ? "is-locked" : "";
 
         return `
-          <button class="answerBtn ${btnClass}" data-v="${encodeURIComponent(String(value))}">
+          <button class="answerBtn ${btnClass} ${lockedClass}" data-v="${encodeURIComponent(String(value))}" ${disabledAttr}>
             ${escapeHtml(label)}
           </button>
         `;
@@ -277,72 +310,86 @@
         <div class="answerGrid" id="choiceRow">${buttons}</div>
       `;
 
-      document.getElementById("choiceRow").addEventListener("click", (ev) => {
-        const btn = ev.target.closest("button[data-v]");
-        if (!btn) return;
-        const v = decodeURIComponent(btn.getAttribute("data-v"));
-        submitVote("multi", v);
-      });
+      if (!isLocked) {
+        document.getElementById("choiceRow").addEventListener("click", (ev) => {
+          const btn = ev.target.closest("button[data-v]");
+          if (!btn) return;
+          const v = decodeURIComponent(btn.getAttribute("data-v"));
+          submitVote("multi", v);
+        });
+      }
     }
 
     function renderLikert() {
+      const disabledAttr = lockState === "locked" ? "disabled" : "";
+
       voteBox.innerHTML = `
         <strong>Velg tall</strong><br>
         <div class="mt20">
-          <input id="likertInput" class="input" type="number" inputmode="numeric" placeholder="0-10" />
-          <button id="likertSend" class="btn">Send svar</button>
+          <input id="likertInput" class="input" type="number" inputmode="numeric" placeholder="0-10" ${disabledAttr} />
+          <button id="likertSend" class="btn" ${disabledAttr}>Send svar</button>
         </div>
       `;
 
-      document.getElementById("likertSend").addEventListener("click", () => {
-        const raw = document.getElementById("likertInput").value;
-        const n = Number(raw);
-        if (!Number.isFinite(n)) {
-          setMsg('<strong>Mangler gyldig svar.</strong><br><span class="mono">Skriv inn et tall.</span>');
-          return;
-        }
-        submitVote("likert", n);
-      });
+      if (lockState !== "locked") {
+        document.getElementById("likertSend").addEventListener("click", () => {
+          const raw = document.getElementById("likertInput").value;
+          const n = Number(raw);
+          if (!Number.isFinite(n)) {
+            setMsg('<strong>Mangler gyldig svar.</strong><br><span class="mono">Skriv inn et tall.</span>');
+            return;
+          }
+          submitVote("likert", n);
+        });
+      }
     }
 
     function renderOpen() {
+      const disabledAttr = lockState === "locked" ? "disabled" : "";
+
       voteBox.innerHTML = `
         <strong>Skriv svaret ditt</strong><br>
         <div class="mt20">
-          <textarea id="openInput" class="inputArea" rows="4" placeholder="Skriv svaret ditt..."></textarea>
+          <textarea id="openInput" class="inputArea" rows="4" placeholder="Skriv svaret ditt..." ${disabledAttr}></textarea>
           <div class="mt20">
-            <button id="openSend" class="btn">Send svar</button>
+            <button id="openSend" class="btn" ${disabledAttr}>Send svar</button>
           </div>
         </div>
       `;
 
-      document.getElementById("openSend").addEventListener("click", () => {
-        const t = (document.getElementById("openInput").value || "").trim();
-        if (!t) {
-          setMsg('<strong>Mangler svar.</strong><br><span class="mono">Skriv noe før du sender.</span>');
-          return;
-        }
-        submitVote("open", t);
-      });
+      if (lockState !== "locked") {
+        document.getElementById("openSend").addEventListener("click", () => {
+          const t = (document.getElementById("openInput").value || "").trim();
+          if (!t) {
+            setMsg('<strong>Mangler svar.</strong><br><span class="mono">Skriv noe før du sender.</span>');
+            return;
+          }
+          submitVote("open", t);
+        });
+      }
     }
 
     function renderWordcloud() {
+      const disabledAttr = lockState === "locked" ? "disabled" : "";
+
       voteBox.innerHTML = `
         <strong>Skriv ett ord eller en kort frase</strong><br>
         <div class="mt20">
-          <input id="wcInput" class="inputWide" type="text" placeholder="Ett ord eller kort frase" />
-          <button id="wcSend" class="btn">Send svar</button>
+          <input id="wcInput" class="inputWide" type="text" placeholder="Ett ord eller kort frase" ${disabledAttr} />
+          <button id="wcSend" class="btn" ${disabledAttr}>Send svar</button>
         </div>
       `;
 
-      document.getElementById("wcSend").addEventListener("click", () => {
-        const t = (document.getElementById("wcInput").value || "").trim();
-        if (!t) {
-          setMsg('<strong>Mangler svar.</strong><br><span class="mono">Skriv noe før du sender.</span>');
-          return;
-        }
-        submitVote("wordcloud", t);
-      });
+      if (lockState !== "locked") {
+        document.getElementById("wcSend").addEventListener("click", () => {
+          const t = (document.getElementById("wcInput").value || "").trim();
+          if (!t) {
+            setMsg('<strong>Mangler svar.</strong><br><span class="mono">Skriv noe før du sender.</span>');
+            return;
+          }
+          submitVote("wordcloud", t);
+        });
+      }
     }
 
     function renderVoteUI() {
@@ -364,11 +411,6 @@
         return;
       }
 
-      if (lockState === "locked") {
-        setVoteUILockedAlready();
-        return;
-      }
-
       if (currentMode === "multi") {
         const q = currentQuestion || {};
         const choices = Array.isArray(q.choices) ? q.choices : null;
@@ -376,7 +418,7 @@
           setVoteUIWaiting();
           return;
         }
-        renderMulti(choices);
+        renderMulti(choices, lockState === "locked");
         return;
       }
 
@@ -474,7 +516,13 @@
         roundId,
         clientId,
         (res) => {
+          const prevLockState = lockState;
           lockState = (res && res.exists) ? "locked" : "unlocked";
+
+          if (lockState === "unlocked" && prevLockState !== "unlocked") {
+            setMsg("");
+          }
+
           renderVoteUI();
         },
         (err) => {
@@ -494,6 +542,8 @@
         (state) => {
           renderState(state);
 
+          const prevRoundId = currentRoundId;
+
           currentStatus = state && state.status ? state.status : null;
           currentMode = state && state.mode ? state.mode : null;
           currentQuestion = state && state.question ? state.question : null;
@@ -511,6 +561,10 @@
               lockState = "none";
               setMsg("");
             }
+          }
+
+          if (prevRoundId !== currentRoundId && currentRoundId) {
+            setMsg("");
           }
 
           renderVoteUI();
