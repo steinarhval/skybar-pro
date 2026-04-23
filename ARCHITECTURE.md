@@ -1,259 +1,178 @@
-# ARCHITECTURE.md  
-Undervisningssystem v2 – Grunnlov
+# ARCHITECTURE.md – Undervisningssystem V2 (v1)
 
-Dette dokumentet definerer de faste prinsippene for systemet.  
-All implementasjon skal følge denne kontrakten.  
-Ingen avvik uten eksplisitt beslutning.
+## 1. Formål
 
----
+Dette systemet er en live undervisningsrigg for:
 
-# 1. Formål
+- sanntids spørsmål
+- deltakerrespons via mobil
+- visning av aggregert resultat på plenumsskjerm
 
-Systemet er en session-basert undervisningsplattform med tre roller:
-
-- **Controller** (foreleser)
-- **Display** (plenumsskjerm)
-- **Deltaker** (mobil)
-
-Systemet skal være robust, forutsigbart og uten sideeffekter mellom spørsmål.
+Systemet er laget for enkel, stabil bruk i undervisning.
 
 ---
 
-# 2. Modus (kun 4)
+## 2. Prinsipper
 
-Systemet støtter kun følgende modus:
-
-- `multi`
-- `likert`
-- `open`
-- `wordcloud`
-
----
-
-# 3. Datamodell – Hovedprinsipp
-
-## Session og State er separate konsepter.
-
-### Session = metadata og historikk  
-### State = styringskilde (live kontroll)
-
-State skal **aldri inneholde svar**.
+- Fungerende kode er fasit
+- Enkelt > avansert
+- Live-bruk > fremtidige features
+- Ingen unødvendig lagring
+- Ingen personidentifiserbare data
+- Konservativ utvikling
 
 ---
 
-# 4. Firestore-struktur
+## 3. Roller
 
-## 4.1 Owner-peker (én aktiv session per konto)
+Systemet har tre tydelige roller:
 
+### kontroll.html
+- Operatør (foreleser)
+- Starter session
+- Setter spørsmål og modus
+- Styrer collect / results / reset
 
-owners/{ownerId}
+### display.html
+- Publikumsskjerm
+- Viser spørsmål og resultater
+- Ingen kontrollfunksjoner
 
+### innhenting.html
+- Deltaker (mobil)
+- Avgir svar
+- Én stemme per runde (vote-lock)
 
-Felter:
+---
+
+## 4. Kjerneflyt
+
+1. Start session
+2. Generer joinCode
+3. Deltakere kobler seg på
+4. Sett spørsmål + modus
+5. Start runde (roundId)
+6. Samle svar (collect)
+7. Vis resultater (results)
+8. Reset → ny runde
+
+---
+
+## 5. Firestore-struktur
+
+### owners/{ownerId}
 - activeSessionId
 - activeJoinCode
-- updatedAt
 
-Det kan kun finnes én aktiv session per owner.
-
----
-
-## 4.2 JoinCode-routing
-
-
-joinCodes/{joinCode}
-
-
-Felter:
+### joinCodes/{joinCode}
 - sessionId
+- ownerId
+- active
+
+### sessions/{sessionId}
 - ownerId
 - createdAt
-- active (true/false)
+- status
+- saveResults (ikke brukt aktivt i v1)
 
-Når ny session startes:
-- gammel joinCode settes `active: false`
-
----
-
-## 4.3 Session-metadata (historikk)
-
-
-sessions/{sessionId}
-
-
-Felter:
-- sessionId
-- ownerId
-- status: "active" | "ended"
-- startedAt
-- endedAt
-- updatedAt
-- joinCode
-- saveResults (true/false)
-- programId (kan være null)
-
-Session-dokumentet inneholder aldri svar.
-
----
-
-## 4.4 State (styringskilde)
-
-
-sessions/{sessionId}/state/live
-
-
-Felter:
-- sessionId
-- status: "idle" | "collect" | "results" | "paused"
-- mode
+#### state/live
+- status (idle / collect / results / paused)
+- mode (multi / likert / open / wordcloud)
 - roundId
 - question
 - controllerId
 - controllerLeaseUntil
-- controllerTs
 
-State inneholder aldri svar-data.
-State-dokumentet finnes kun for aktiv session.
+#### rounds/{roundId}
 
----
-## 4.5 Programs (undervisningsopplegg) 
-programs/{programId} 
-
-Felter:
-
-- ownerId
-- title
-- content (spørsmål/struktur)
-- visibility: "private" | "shared" | "library"
+##### votes/{clientId}
+- value
+- mode
 - createdAt
-- updatedAt
-- sourceProgramId (kan være null)
 
-Regler:
-
-Program inneholder aldri personidentifiserbare data.
-Kun eier (ownerId) eller admin kan endre/slette et program.
-Deling gir lesetilgang, ikke redigeringsrett.
-Kopi (copy-to-own) opprettes som nytt program med ny ownerId.
+##### agg/live
+- n
+- counts / sum / texts / freq
 
 ---
 
-# 5. Roller og skrive-rettigheter
+## 6. Viktige mekanismer
 
-- Controller kan skrive til state.
-- Display kan kun lese state og aggregert resultatdata.
-- Deltaker kan aldri skrive til state.
-- Deltaker kan kun skrive til votes-path under session.
-- Controller kan kun skrive til state for aktiv session.
-- “Controller” betyr eier av aktiv session (ownerId).
-- Kun session-eier (ownerId) eller admin kan skrive til sessions/{sessionId} og state/live.
+### Vote-lock
+- 1 stemme per clientId per roundId
+- håndheves med Firestore transaction
 
----
+### Controller lease
+- hindrer konflikt mellom kontrollere
+- kun én aktiv controller
 
-# 6. Vote-lock prinsipp
-
-Én stemme per:
-- clientId
-- roundId
-
-Vote-lock implementeres via:
-
-
-sessions/{sessionId}/rounds/{roundId}/votes/{clientId}
-
-
-Reset skjer ved ny `roundId`.
-
-Reset sletter aldri hele session.
-Reset gjelder kun aktiv round.
+### Reconnect
+- deltaker husker session lokalt
+- display og innhenting kan koble seg på igjen
 
 ---
 
-# 7. Reset-semantikk
+## 7. Modus
 
-- Reset påvirker kun aktiv `roundId`
-- Reset skal aldri nullstille hele opplegget
-- Reset skal aldri påvirke tidligere spørsmål
-- Reset skjer ved generering av ny `roundId`
-- Reset genererer alltid ny `roundId` før ny innsamling starter.
+### multi (prioritert)
+- valg med søylediagram
+- tydelig visuell feedback
 
----
+### likert
+- numerisk verdi
 
-# 8. SaveResults-policy
+### open
+- tekstliste
 
-Ved session start settes:
-
-
-saveResults: true | false
-
-
-Hvis `saveResults = false`:
-- Data kan slettes ved session-end.
-
-Hvis `true`:
-- Data beholdes for eksport.
-
+### wordcloud
+- ord-frekvens
 
 ---
 
-# 9. Controller lease
+## 8. UI-prinsipper
 
-Controller har en tidsbegrenset lease:
-
-- controllerLeaseUntil settes ved controller-write
-- Lease håndheves ikke automatisk uten eksplisitt takeover-logikk
-- Manuell overtakelse skal kreve eksplisitt bekreftelse
+- display = ren og tydelig
+- kontroll = teknisk og funksjonell
+- innhenting = mobil, enkel, tydelig
 
 ---
 
-# 10. Stil og UI-regler
+## 9. Styling-regler
 
-- All stil defineres i CSS.
-- Ingen inline styles i HTML.
-- Ingen dynamisk styling direkte i JS (kun class-toggling).
-- CSS er eneste kilde til layout, farger, fonter og effekter.
-
----
-
-# 11. Replace-semantikk
-
-Når ny session startes:
-
-1. Forrige session settes til `status: "ended"`
-2. Ny session opprettes
-3. Owner-peker oppdateres
-4. State initialiseres på nytt
-5. Gammel joinCode settes `active: false`
-
-Historikk slettes ikke automatisk.
+- All statisk styling i `app.css`
+- HTML = struktur
+- JS = logikk
+- Inline style kun når nødvendig (f.eks. dynamisk høyde på søyler)
 
 ---
 
-# 12. Ikke tillatt
+## 10. Dataprinsipper
 
-- Ingen svar-data i state
-- Ingen global nullstilling av hele opplegg
-- Ingen midlertidige hacks
-- Ingen automatisk skrivning ved refresh
-- Ingen implisitt sideeffekt mellom modus
-- Ingen eksport eller uthenting av votes-data (kun aggregert eksport er tillatt).
+- Ingen lagring etter session er nødvendig
+- Data lever kun i aktiv session
+- Aggregering skjer via Cloud Function
 
 ---
 
-# 13. Endringer i grunnloven
+## 11. Avgrensning (v1)
 
-Endringer i denne filen skal:
+Systemet inkluderer ikke:
 
-- være eksplisitte
-- begrunnes
-- versjoneres i Git
-- godkjennes før implementasjon
+- programbibliotek
+- deling av opplegg
+- eksport
+- historikk
 
 ---
 
-Dette dokumentet er systemets fundament.
-Implementasjonsplaner kan endres.
+## 12. Steg 7 (utsatt)
 
-Grunnloven skal være stabil.
+Steg 7 omfatter:
 
+- lagring av opplegg (programs)
+- deling
+- eksport
 
+Dette er **utsatt** og ikke del av v1.
+
+Det skal ikke påvirke nåværende arkitekturvalg.
