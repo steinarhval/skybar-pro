@@ -1,4 +1,3 @@
-<!-- kontroll.html -->
 <!DOCTYPE html>
 <html lang="no">
 <head>
@@ -16,19 +15,20 @@
     <div class="btnRow">
       <button id="loginBtn">Logg inn med Google</button>
       <button id="startSessionBtn">Start ny session</button>
+      <button id="openDisplayBtn" disabled>Åpne plenum</button>
+      <button id="openCollectBtn" disabled>Åpne deltakerlenke</button>
+      <button id="copyJoinCodeBtn" disabled>Kopier joincode</button>
     </div>
   </div>
 
   <div id="statusBox" class="mt20" aria-live="polite"></div>
   <div id="errorBox" class="mt20"></div>
 
-  <div id="sessionBox" class="mt20"></div>
   <div id="controlsBox" class="mt20"></div>
-
-  <div id="presentationBox" class="mt20"></div>
 
   <details id="techDetails" class="mt20">
     <summary><strong>Vis teknisk info</strong></summary>
+    <div id="sessionBox" class="mt20"></div>
     <div id="leaseBox" class="mt20"></div>
     <div id="userBox" class="mt20"></div>
   </details>
@@ -38,36 +38,30 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 
-  <!-- Lite QR-bibliotek -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-
   <script src="config.js"></script>
   <script src="app.js"></script>
 
   <script>
     const loginBtn = document.getElementById("loginBtn");
-    const userBox = document.getElementById("userBox");
     const startSessionBtn = document.getElementById("startSessionBtn");
+    const openDisplayBtn = document.getElementById("openDisplayBtn");
+    const openCollectBtn = document.getElementById("openCollectBtn");
+    const copyJoinCodeBtn = document.getElementById("copyJoinCodeBtn");
+
+    const userBox = document.getElementById("userBox");
     const sessionBox = document.getElementById("sessionBox");
     const leaseBox = document.getElementById("leaseBox");
     const statusBox = document.getElementById("statusBox");
     const errorBox = document.getElementById("errorBox");
     const controlsBox = document.getElementById("controlsBox");
-    const presentationBox = document.getElementById("presentationBox");
 
     let activeSessionId = null;
     let activeJoinCode = null;
 
     let unsubscribeState = null;
-    let unsubscribeAgg = null;
     let leaseTicker = null;
 
     let lastState = null;
-    let lastAgg = null;
-    let currentAggRoundId = null;
-
-    let presentationQrInstance = null;
-    let lastPresentationQrUrl = null;
 
     function escapeHtml(s) {
       return String(s)
@@ -241,57 +235,12 @@
       document.body.removeChild(ta);
     }
 
-    function buildParticipantUrl(code) {
-      const u = new URL("innhenting.html", window.location.href);
-      u.searchParams.set("joinCode", String(code).toUpperCase());
-      return u.toString();
-    }
+    function updateTopButtons() {
+      const canOpen = !!activeJoinCode;
 
-    function clearPresentationQr() {
-      const qrBox = document.getElementById("presentationQrBox");
-      const qrCodeText = document.getElementById("presentationQrCodeText");
-      const qrDock = document.getElementById("presentationQrDock");
-
-      if (qrBox) qrBox.innerHTML = "";
-      if (qrCodeText) qrCodeText.textContent = "";
-      if (qrDock) qrDock.classList.add("hidden");
-
-      presentationQrInstance = null;
-      lastPresentationQrUrl = null;
-    }
-
-    function renderPresentationQr() {
-      const qrBox = document.getElementById("presentationQrBox");
-      const qrCodeText = document.getElementById("presentationQrCodeText");
-      const qrDock = document.getElementById("presentationQrDock");
-
-      if (!qrBox || !qrCodeText || !qrDock) return;
-
-      if (!activeJoinCode || !/^[A-Z0-9]{6}$/.test(activeJoinCode)) {
-        clearPresentationQr();
-        return;
-      }
-
-      const participantUrl = buildParticipantUrl(activeJoinCode);
-
-      if (participantUrl === lastPresentationQrUrl) {
-        qrCodeText.textContent = activeJoinCode;
-        qrDock.classList.remove("hidden");
-        return;
-      }
-
-      qrBox.innerHTML = "";
-      qrCodeText.textContent = activeJoinCode;
-      qrDock.classList.remove("hidden");
-
-      presentationQrInstance = new QRCode(qrBox, {
-        text: participantUrl,
-        width: 140,
-        height: 140,
-        correctLevel: QRCode.CorrectLevel.M
-      });
-
-      lastPresentationQrUrl = participantUrl;
+      openDisplayBtn.disabled = !canOpen;
+      openCollectBtn.disabled = !canOpen;
+      copyJoinCodeBtn.disabled = !canOpen;
     }
 
     function renderSessionBox() {
@@ -300,6 +249,7 @@
           <strong>Aktiv session</strong><br>
           Ingen aktiv session akkurat nå.
         `;
+        updateTopButtons();
         return;
       }
 
@@ -311,58 +261,16 @@
         ? buildUrl("innhenting.html", { joinCode: activeJoinCode })
         : null;
 
-      const canOpen = !!activeJoinCode;
-
       sessionBox.innerHTML = `
         <strong>Aktiv session</strong><br>
         sessionId: <span class="mono">${escapeHtml(activeSessionId || "-")}</span><br>
         joinCode: <span class="mono">${escapeHtml(activeJoinCode || "-")}</span><br><br>
 
-        <div class="btnRow">
-          <button class="btn" id="openDisplayBtn" ${canOpen ? "" : "disabled"}>Åpne plenum</button>
-          <button class="btn" id="openCollectBtn" ${canOpen ? "" : "disabled"}>Åpne deltakerlenke</button>
-          <button class="btn" id="copyJoinCodeBtn" ${canOpen ? "" : "disabled"}>Kopier joincode</button>
-        </div>
-
-        <div class="mt20">
-          Display-link: <span class="mono">${escapeHtml(displayUrl || "-")}</span><br>
-          Innhenting-link: <span class="mono">${escapeHtml(collectUrl || "-")}</span>
-        </div>
+        Display-link: <span class="mono">${escapeHtml(displayUrl || "-")}</span><br>
+        Innhenting-link: <span class="mono">${escapeHtml(collectUrl || "-")}</span>
       `;
 
-      const openDisplayBtn = document.getElementById("openDisplayBtn");
-      const openCollectBtn = document.getElementById("openCollectBtn");
-      const copyJoinCodeBtn = document.getElementById("copyJoinCodeBtn");
-
-      if (openDisplayBtn) {
-        openDisplayBtn.addEventListener("click", () => {
-          if (!activeJoinCode) return;
-          openInNewTab(buildUrl("display.html", { joinCode: activeJoinCode }));
-          setStatus("Åpnet plenum i nytt vindu.", "ok");
-        });
-      }
-
-      if (openCollectBtn) {
-        openCollectBtn.addEventListener("click", () => {
-          if (!activeJoinCode) return;
-          openInNewTab(buildUrl("innhenting.html", { joinCode: activeJoinCode }));
-          setStatus("Åpnet deltakerlenke i nytt vindu.", "ok");
-        });
-      }
-
-      if (copyJoinCodeBtn) {
-        copyJoinCodeBtn.addEventListener("click", async () => {
-          try {
-            await copyToClipboard(activeJoinCode);
-            setStatus("Joincode kopiert: " + activeJoinCode, "ok");
-          } catch (e) {
-            const msg = e && e.message ? e.message : String(e);
-            setError(msg);
-            setStatus("Kunne ikke kopiere joincode.", "err");
-            console.error(e);
-          }
-        });
-      }
+      updateTopButtons();
     }
 
     function renderControls() {
@@ -537,24 +445,16 @@
           activeSessionId = null;
           activeJoinCode = null;
           lastState = null;
-          lastAgg = null;
-          currentAggRoundId = null;
 
           if (unsubscribeState) unsubscribeState();
-          if (unsubscribeAgg) unsubscribeAgg();
           unsubscribeState = null;
-          unsubscribeAgg = null;
 
-          sessionBox.innerHTML = `
-            <strong>Aktiv session</strong><br>
-            Session avsluttet.
-          `;
+          renderSessionBox();
           controlsBox.innerHTML = `
             <strong>Styring</strong><br>
             Ingen aktiv session akkurat nå.
           `;
           renderLease(null);
-          renderPresentation();
 
           setStatus("Session avsluttet.", "ok");
         } catch (err) {
@@ -566,210 +466,11 @@
       });
     }
 
-    function getStatusLine(status) {
-      if (status === "collect") return "Innsamling pågår";
-      if (status === "results") return "Resultater vises";
-      if (status === "paused") return "Pause";
-      if (status === "idle") return "Klar";
-      return status || "-";
-    }
-
-    function buildChoiceLabelMap(question) {
-      const map = {};
-      const q = question || {};
-      const choices = Array.isArray(q.choices) ? q.choices : [];
-      for (const c of choices) {
-        if (!c) continue;
-        const id = (c.id != null) ? String(c.id) : null;
-        const label = (c.label != null) ? String(c.label) : (id || "");
-        if (id) map[id] = label || id;
-      }
-      return map;
-    }
-
-    function getMultiBarClass(index, total) {
-      if (total === 2) {
-        return index === 0 ? "multiBar--green" : "multiBar--red";
-      }
-
-      if (total === 3) {
-        if (index === 0) return "multiBar--green";
-        if (index === 1) return "multiBar--yellow";
-        return "multiBar--red";
-      }
-
-      const palette = [
-        "multiBar--blue",
-        "multiBar--green",
-        "multiBar--yellow",
-        "multiBar--red",
-        "multiBar--purple",
-        "multiBar--teal",
-        "multiBar--slate"
-      ];
-
-      return palette[index % palette.length];
-    }
-
-    function renderPresentation() {
-      if (!activeSessionId) {
-        presentationBox.innerHTML = `
-          <div class="presentationShell">
-            <div class="presentationQuestion">Ingen aktiv session.</div>
-            <div class="presentationPlaceholder">Start en session for å vise presentasjonsmodus her.</div>
-          </div>
-        `;
-        clearPresentationQr();
-        return;
-      }
-
-      const state = lastState;
-      const agg = lastAgg;
-
-      if (!state) {
-        presentationBox.innerHTML = `
-          <div class="presentationShell">
-            <div class="presentationQuestion">Venter på state…</div>
-            <div class="presentationPlaceholder">Presentasjonsvisningen kobler seg til aktiv session.</div>
-            <div id="presentationQrDock" class="presentationQrDock hidden">
-              <div class="presentationQrTitle">Scan for å delta</div>
-              <div id="presentationQrBox"></div>
-              <div class="presentationQrCodeText mono" id="presentationQrCodeText"></div>
-              <div class="presentationQrText">Mobilen går rett til svarskjermen.</div>
-            </div>
-          </div>
-        `;
-        renderPresentationQr();
-        return;
-      }
-
-      const status = state.status || null;
-      const mode = state.mode || null;
-      const roundId = state.roundId || null;
-      const question = state.question || null;
-      const questionText = question && question.text ? String(question.text).trim() : "";
-
-      let contentHtml = "";
-
-      if (mode !== "multi") {
-        contentHtml = `
-          <div class="presentationPlaceholder">
-            Denne presentasjonsvisningen er foreløpig laget for <span class="mono">multi</span>.<br>
-            Nåværende modus: <span class="mono">${escapeHtml(mode || "-")}</span>
-          </div>
-        `;
-      } else if (!roundId) {
-        contentHtml = `
-          <div class="presentationPlaceholder">
-            Venter på aktiv runde…
-          </div>
-        `;
-      } else {
-        const counts = (agg && agg.counts && typeof agg.counts === "object") ? agg.counts : {};
-        const n = (agg && typeof agg.n === "number") ? agg.n : 0;
-        const labelMap = buildChoiceLabelMap(question);
-        const qChoices = (question && Array.isArray(question.choices)) ? question.choices : [];
-
-        const entries = qChoices.map((c, idx) => {
-          const id = (c && c.id != null) ? String(c.id) : ("choice_" + (idx + 1));
-          const label = (c && (c.label || c.text)) ? String(c.label || c.text) : (labelMap[id] || id);
-          const count = (typeof counts[id] === "number") ? counts[id] : 0;
-          return { id, label, count };
-        });
-
-        if (!entries.length) {
-          contentHtml = `
-            <div class="presentationPlaceholder">
-              Ingen svaralternativer å vise.
-            </div>
-          `;
-        } else {
-          const barsHtml = entries.map((entry, idx) => {
-            const pct = n > 0 ? Math.round((entry.count / n) * 100) : 0;
-            const heightPct = Math.max(pct, entry.count > 0 ? 4 : 0);
-            const barClass = getMultiBarClass(idx, entries.length);
-
-            return `
-              <div class="multiBarWrap">
-                <div class="multiBarValue">
-                  ${pct} %
-                  <span class="multiBarValueSub">${entry.count} svar</span>
-                </div>
-                <div class="multiBarTrack">
-                  <div class="multiBar ${barClass}" style="height:${heightPct}%;"></div>
-                </div>
-                <div class="multiBarLabel">${escapeHtml(entry.label)}</div>
-              </div>
-            `;
-          }).join("");
-
-          contentHtml = `
-            <div class="multiChart">
-              ${barsHtml}
-            </div>
-            <div class="presentationFooter">
-              Fordeling av alle innsendte svar i denne runden. Totalt: <span class="mono">${n}</span>
-            </div>
-          `;
-        }
-      }
-
-      presentationBox.innerHTML = `
-        <div class="presentationShell">
-          <div class="presentationMeta">
-            <span><strong>Status:</strong> ${escapeHtml(getStatusLine(status))}</span>
-            <span><strong>Mode:</strong> <span class="mono">${escapeHtml(mode || "-")}</span></span>
-            <span><strong>Runde:</strong> <span class="mono">${escapeHtml(roundId || "-")}</span></span>
-          </div>
-
-          <div class="presentationQuestion">
-            ${questionText ? escapeHtml(questionText) : "Venter på spørsmålsformulering…"}
-          </div>
-
-          ${contentHtml}
-
-          <div id="presentationQrDock" class="presentationQrDock hidden">
-            <div class="presentationQrTitle">Scan for å delta</div>
-            <div id="presentationQrBox"></div>
-            <div class="presentationQrCodeText mono" id="presentationQrCodeText"></div>
-            <div class="presentationQrText">Mobilen går rett til svarskjermen.</div>
-          </div>
-        </div>
-      `;
-
-      renderPresentationQr();
-    }
-
     function startLeaseTicker() {
       if (leaseTicker) clearInterval(leaseTicker);
       leaseTicker = setInterval(() => {
         renderLease(lastState);
       }, 1000);
-    }
-
-    function detachAgg() {
-      if (unsubscribeAgg) unsubscribeAgg();
-      unsubscribeAgg = null;
-      lastAgg = null;
-      currentAggRoundId = null;
-    }
-
-    function attachAgg(sessionId, roundId) {
-      if (unsubscribeAgg) unsubscribeAgg();
-
-      unsubscribeAgg = App.listenAgg(
-        sessionId,
-        roundId,
-        (agg) => {
-          lastAgg = agg;
-          currentAggRoundId = roundId;
-          renderPresentation();
-        },
-        (err) => {
-          setError("Kunne ikke lese agg/live: " + (err && err.message ? err.message : String(err)));
-          setStatus("Kunne ikke lese agg/live.", "err");
-        }
-      );
     }
 
     function attachStateListener(sessionId) {
@@ -781,21 +482,6 @@
           lastState = data;
           renderLease(data);
           renderControls();
-
-          const newRoundId = data && data.roundId ? data.roundId : null;
-          const mode = data && data.mode ? data.mode : null;
-
-          if (!newRoundId || mode !== "multi") {
-            detachAgg();
-            renderPresentation();
-            return;
-          }
-
-          if (newRoundId !== currentAggRoundId) {
-            attachAgg(sessionId, newRoundId);
-          } else {
-            renderPresentation();
-          }
         },
         (err) => {
           setError("Kunne ikke lese state/live: " + (err && err.message ? err.message : String(err)));
@@ -859,6 +545,30 @@
       }
     });
 
+    openDisplayBtn.addEventListener("click", () => {
+      if (!activeJoinCode) return;
+      openInNewTab(buildUrl("display.html", { joinCode: activeJoinCode }));
+      setStatus("Åpnet plenum i nytt vindu.", "ok");
+    });
+
+    openCollectBtn.addEventListener("click", () => {
+      if (!activeJoinCode) return;
+      openInNewTab(buildUrl("innhenting.html", { joinCode: activeJoinCode }));
+      setStatus("Åpnet deltakerlenke i nytt vindu.", "ok");
+    });
+
+    copyJoinCodeBtn.addEventListener("click", async () => {
+      try {
+        await copyToClipboard(activeJoinCode);
+        setStatus("Joincode kopiert: " + activeJoinCode, "ok");
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        setError(msg);
+        setStatus("Kunne ikke kopiere joincode.", "err");
+        console.error(e);
+      }
+    });
+
     loginBtn.addEventListener("click", async () => {
       try {
         setError("");
@@ -882,11 +592,8 @@
         activeSessionId = res.sessionId;
         activeJoinCode = res.joinCode;
         lastState = null;
-        lastAgg = null;
-        currentAggRoundId = null;
 
         renderSessionBox();
-        renderPresentation();
         attachStateListener(res.sessionId);
         setStatus("Ny session startet.", "ok");
       } catch (err) {
@@ -904,13 +611,9 @@
         activeSessionId = null;
         activeJoinCode = null;
         lastState = null;
-        lastAgg = null;
-        currentAggRoundId = null;
 
         if (unsubscribeState) unsubscribeState();
-        if (unsubscribeAgg) unsubscribeAgg();
         unsubscribeState = null;
-        unsubscribeAgg = null;
 
         if (leaseTicker) clearInterval(leaseTicker);
         leaseTicker = null;
@@ -928,8 +631,8 @@
           Logg inn for å starte eller laste en session.
         `;
         statusBox.innerHTML = "";
-        renderPresentation();
         setError("");
+        updateTopButtons();
         return;
       }
 
@@ -942,15 +645,12 @@
           activeJoinCode = info.activeJoinCode;
 
           renderSessionBox();
-          renderPresentation();
           attachStateListener(info.activeSessionId);
           setStatus("Aktiv session lastet.", "ok");
         } else {
           activeSessionId = null;
           activeJoinCode = null;
           lastState = null;
-          lastAgg = null;
-          currentAggRoundId = null;
 
           renderSessionBox();
           leaseBox.innerHTML = `
@@ -958,7 +658,6 @@
             Ingen aktiv session funnet på owner-peker.
           `;
           renderControls();
-          renderPresentation();
           setStatus("Ingen aktiv session funnet.", "warn");
         }
       } catch (e) {
@@ -968,7 +667,9 @@
       }
     });
 
-    renderPresentation();
+    renderSessionBox();
+    updateTopButtons();
   </script>
 </body>
+</html>
 </html>
