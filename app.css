@@ -591,7 +591,7 @@ body.display-page #resultBox > div:first-child {
 }
 
 body.display-page .multiChart {
-  gap: 56px;
+  gap: 70px;
   max-width: 1320px;
   min-height: 500px;
   margin-left: auto;
@@ -621,7 +621,7 @@ body.display-page .multiBarValueSub {
 }
 
 body.display-page .multiBarLabel {
-  font-size: 1.15rem;
+  font-size: 1.25rem;
   font-weight: 750;
 }
 
