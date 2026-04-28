@@ -489,8 +489,8 @@ body > button + button {
   align-items: end;
   justify-content: center;
   gap: 16px;
-  min-height: 320px;
-  padding: 20px 8px 8px;
+  min-height: 460px;
+  padding: 28px 8px 8px;
   margin-top: 20px;
 }
 
