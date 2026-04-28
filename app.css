@@ -497,7 +497,7 @@ body > button + button {
 .multiBarWrap {
   flex: 1 1 0;
   min-width: 72px;
-  max-width: 140px;
+  max-width: 220px;
   display: flex;
   flex-direction: column;
   align-items: center;
