@@ -1,178 +1,74 @@
-# ARCHITECTURE.md – Undervisningssystem V2 (v1)
+# Skybar Pro – arkitektur
+
+Oppdatert 24. november 2026.
 
 ## 1. Formål
 
-Dette systemet er en live undervisningsrigg for:
-
-- sanntids spørsmål
-- deltakerrespons via mobil
-- visning av aggregert resultat på plenumsskjerm
-
-Systemet er laget for enkel, stabil bruk i undervisning.
-
----
+Skybar Pro er et nettbasert live-verktøy for undervisning: foreleseren styrer spørsmål, deltakerne svarer via mobil, og aggregerte resultater vises på plenumsskjerm. Multi (flervalg) er hovedmodus.
 
 ## 2. Prinsipper
 
-- Fungerende kode er fasit
-- Enkelt > avansert
-- Live-bruk > fremtidige features
-- Ingen unødvendig lagring
-- Ingen personidentifiserbare data
-- Konservativ utvikling
-
----
+- Fungerende kode er fasit; stabilitet fremfor nye funksjoner.
+- Enkelt fremfor avansert. Live-bruk fremfor historikk.
+- Minimer datalagring og unngå innsamling av identifiserende opplysninger fra deltakerne. Tekniske klient-ID-er og eventuell fritekst må likevel behandles med omtanke.
+- Konservative, små, testbare endringer.
 
 ## 3. Roller
 
-Systemet har tre tydelige roller:
-
-### kontroll.html
-- Operatør (foreleser)
-- Starter session
-- Setter spørsmål og modus
-- Styrer collect / results / reset
-
-### display.html
-- Publikumsskjerm
-- Viser spørsmål og resultater
-- Ingen kontrollfunksjoner
-
-### innhenting.html
-- Deltaker (mobil)
-- Avgir svar
-- Én stemme per runde (vote-lock)
-
----
+- `kontroll.html`: foreleser logger inn, starter og avslutter sesjon, velger modus og spørsmål, starter runder og styrer collect/results/reset.
+- `display.html`: viser spørsmål, QR-kode/join-kode, antall svar og aggregerte resultater; ingen kontrollfunksjoner.
+- `innhenting.html`: deltakere svarer via mobil; én stemme per clientId per runde.
+- `join.html`: alternativ inngang via manuell join-kode.
 
 ## 4. Kjerneflyt
 
-1. Start session
-2. Generer joinCode
-3. Deltakere kobler seg på
-4. Sett spørsmål + modus
-5. Start runde (roundId)
-6. Samle svar (collect)
-7. Vis resultater (results)
-8. Reset → ny runde
+1. Start sesjon og generer joinCode.
+2. Deltakerne kobler seg til via QR-kode eller join-kode.
+3. Velg spørsmål og modus, start runde med ny roundId.
+4. Samle inn svar (collect).
+5. Vis eller skjul resultater (results/collect).
+6. Start ny runde eller avslutt sesjonen.
 
----
+## 5. Firestore-struktur (eksisterende)
 
-## 5. Firestore-struktur
-
-### owners/{ownerId}
-- activeSessionId
-- activeJoinCode
-
-### joinCodes/{joinCode}
-- sessionId
-- ownerId
-- active
-
-### sessions/{sessionId}
-- ownerId
-- createdAt
-- status
-- saveResults (ikke brukt aktivt i v1)
-
-#### state/live
-- status (idle / collect / results / paused)
-- mode (multi / likert / open / wordcloud)
-- roundId
-- question
-- controllerId
-- controllerLeaseUntil
-
-#### rounds/{roundId}
-
-##### votes/{clientId}
-- value
-- mode
-- createdAt
-
-##### agg/live
-- n
-- counts / sum / texts / freq
-
----
+- `owners/{ownerId}`: activeSessionId, activeJoinCode.
+- `joinCodes/{joinCode}`: sessionId, ownerId, active.
+- `sessions/{sessionId}`: eier, status, tidsstempler og eksisterende metadata (saveResults, programId). Sistnevnte er ikke nødvendige for live-bruk og er kandidater for fjerning.
+- `sessions/{sessionId}/state/live`: status, mode, roundId, question, controllerId, controllerLeaseUntil.
+- `sessions/{sessionId}/rounds/{roundId}/votes/{clientId}`: value, mode, createdAt.
+- `sessions/{sessionId}/rounds/{roundId}/agg/live`: n og modusavhengige counts, sum/count, texts eller freq.
 
 ## 6. Viktige mekanismer
 
-### Vote-lock
-- 1 stemme per clientId per roundId
-- håndheves med Firestore transaction
+- Vote-lock: Firestore-transaksjon sikrer én stemme per klient-ID per runde.
+- Controller lease: hindrer konflikt mellom kontrollere.
+- Reconnect: klientene kan koble seg til igjen.
+- Serverbasert opptelling: Cloud Function `onVoteCreated` aggregerer stemmer; display leser resultatdokumentet. Klientene skal ikke selv skrive aggregater.
+- Firestore Rules beskytter tilgang og skriveoperasjoner.
+- Tekniske ID-er og diagnostikk beholdes.
 
-### Controller lease
-- hindrer konflikt mellom kontrollere
-- kun én aktiv controller
+## 7. Moduser
 
-### Reconnect
-- deltaker husker session lokalt
-- display og innhenting kan koble seg på igjen
+Multi er hovedprioritet. Eksisterende likert, open og wordcloud beholdes så lenge de ikke skaper konkrete problemer. Ingen nye moduser planlegges.
 
----
+## 8. UI og styling
 
-## 7. Modus
+Display skal være rent og tydelig; kontrollpanelet funksjonelt; innhenting enkel og mobilvennlig. Statisk styling i app.css, HTML for struktur, JavaScript for logikk. Inline-stil kun ved behov, eksempelvis dynamiske søyler.
 
-### multi (prioritert)
-- valg med søylediagram
-- tydelig visuell feedback
+## 9. Dataprinsipper
 
-### likert
-- numerisk verdi
+**Mål:** Stemmer og resultater skal kun beholdes så lenge de trengs for live-bruk. Ingen permanent historikk eller resultatarkiv.
 
-### open
-- tekstliste
+**Dagens status:** Avslutning og ny runde sletter ikke tidligere data. Automatisk sletting er ikke implementert. saveResults er metadata og styrer ikke sletting.
 
-### wordcloud
-- ord-frekvens
+**Plan:** Etabler sikker opprydding av utløpte runder, avsluttede sesjoner, tilhørende underliggende dokumenter og join-koder. Avklar oppbevaringstid før implementering. Bevar aktiv sesjon, vote-lock og reconnect; håndter forsinkede funksjonshendelser slik at slettede data ikke gjenopprettes.
 
----
+## 10. Drift
 
-## 8. UI-prinsipper
+Firebase-prosjekt skybar-pro med Cloud Firestore, Authentication og Cloud Functions. Brukerflatene brukes via GitHub Pages; eksisterende GitHub Actions deployer også Firebase Hosting, Functions og Rules. Blaze med aktiv fakturering er nødvendig for eksisterende Cloud Functions-arkitektur. Overvåk kostnader; budsjettvarsler er ikke kostnadstak.
 
-- display = ren og tydelig
-- kontroll = teknisk og funksjonell
-- innhenting = mobil, enkel, tydelig
+24. november 2026: Live-opptelling gjenopprettet etter reaktivering av fakturering og overgang fra Spark til Blaze, uten kodeendring.
 
----
+## 11. Avgrensning
 
-## 9. Styling-regler
-
-- All statisk styling i `app.css`
-- HTML = struktur
-- JS = logikk
-- Inline style kun når nødvendig (f.eks. dynamisk høyde på søyler)
-
----
-
-## 10. Dataprinsipper
-
-- Ingen lagring etter session er nødvendig
-- Data lever kun i aktiv session
-- Aggregering skjer via Cloud Function
-
----
-
-## 11. Avgrensning (v1)
-
-Systemet inkluderer ikke:
-
-- programbibliotek
-- deling av opplegg
-- eksport
-- historikk
-
----
-
-## 12. Steg 7 (utsatt)
-
-Steg 7 omfatter:
-
-- lagring av opplegg (programs)
-- deling
-- eksport
-
-Dette er **utsatt** og ikke del av v1.
-
-Det skal ikke påvirke nåværende arkitekturvalg.
+Steg 7 er skrinlagt: ingen programbibliotek, lagring/gjenbruk av spørsmålssett, deling av opplegg, eksport eller resultathistorikk. Nye funksjoner krever konkret behov. Teknisk midlertidig lagring er fortsatt nødvendig for live-innsamling.

@@ -1,116 +1,42 @@
-# IMPLEMENTATION_PLAN.md – Undervisningssystem V2 (v1)
+# Skybar Pro – vedlikeholdsplan
+
+Oppdatert 24. november 2026.
 
 ## Status
 
-Steg 0–6 er ferdig implementert og fungerer stabilt.
+Steg 0–6 er implementert: Firebase-oppsett, sesjoner, join-koder, state/live, klientflyt, vote-lock og serverbasert aggregering. Live-flervalgsfunksjonen fungerer igjen etter reaktivering av Blaze 24. november 2026. Andre moduser er ikke bekreftet retestet denne dagen.
 
-Fokus nå:
-- stabilitet
-- enkelhet
-- UI/UX
-- visning
+Steg 7 (programbibliotek, deling, eksport og historikk) er skrinlagt, ikke utsatt.
 
----
+## Prioritert vedlikehold
 
-## Ferdige steg
-
-### Steg 0–2
-- Firebase setup
-- Session struktur
-- JoinCode-system
-
-### Steg 3–4
-- State/live
-- Kontroll → display → innhenting flyt
-
-### Steg 5
-- Vote-lock (transaction-basert)
-
-### Steg 6
-- Aggregator (Cloud Function)
-- multi / likert / open / wordcloud
-
----
-
-## Nåværende fokus (v1)
-
-Videre arbeid skal være:
-
-### 1. UI-forbedringer
-- display (plenum)
-- innhenting (mobil)
-- kontroll (operatør)
-
-### 2. Multi-modus (hovedprioritet)
-- visning
-- tydelighet
-- pedagogisk effekt
-
-### 3. Stabilitet
-- reconnect
-- vote-lock
-- lease
-
----
+- [ ] Sikre fungerende referanseversjon (ZIP fra 28. april 2026, eventuelt Git-tag).
+- [x] Utarbeide oppdatert dokumentasjon (publisering i repository gjenstår).
+- [ ] Fjerne ubrukt metadata saveResults og programId etter kontroll av avhengigheter.
+- [ ] Avklare kort oppbevaringstid for live-data og implementere sikker automatisk opprydding, inkludert underliggende Firestore-dokumenter og utløpte join-koder. Unngå sletting av aktive data og gjenoppretting via forsinkede hendelser.
+- [ ] Rydde gamle data etter at oppryddingen er testet og sletting er godkjent.
+- [ ] Gjennomgå tilgangsregler, validering av stemmer, idempotent aggregering og kostnadsrisiko.
+- [ ] Gjennomføre regresjonstest etter hver endring.
 
 ## Arbeidsform
 
-- små steg
-- én endring om gangen
-- alltid test etter endring
-- ikke refactor for moro skyld
-- ikke rør fungerende logikk
+Små steg, én avgrenset endring om gangen. Behold fungerende arkitektur og unngå refaktorering uten konkret gevinst. Gjennomgå diff før publisering. Eksisterende workflow kjører ved push til main og deployer også backend og regler; dokumentasjonsendringer bør ikke utløse unødvendig backend-deployment.
 
----
+## Funksjonstest
 
-## Prioriterte forbedringsområder
+1. Logg inn i kontroll.html og opprett ny sesjon.
+2. Åpne display.html og koble til via QR-kode fra mobil.
+3. Velg multi, sett spørsmål og start runde.
+4. Avgi svar fra flere klienter; kontroller antall og søyler.
+5. Test vis/skjul og ny runde uten gamle stemmer.
+6. Test vote-lock, reconnect og avslutning av sesjon.
+7. Gjenta flere runder. Ved endringer i felleslogikk testes også likert, open og wordcloud.
+8. Ved innføring av opprydding: test både aktiv sesjon, utløpte data og forsinkede stemmehendelser.
 
-1. Display:
-   - bedre layout
-   - tydelig status
-   - bedre visning av resultater
+## Drift og feilsøking
 
-2. Innhenting:
-   - tydeligere tilbakemeldinger
-   - bedre mobilopplevelse
-
-3. Kontroll:
-   - klarere status
-   - bedre flyt
-
----
-
-## Ikke prioritert nå
-
-- ytelsesoptimalisering (systemet er raskt nok)
-- nye datamodeller
-- avansert logging
-- eksport
-
----
-
-## Steg 7 (utsatt)
-
-Steg 7 er satt på pause:
-
-- programs collection
-- deling
-- eksport
-
-Dette skal ikke implementeres nå.
-
----
-
-## Videre strategi
-
-Når v1 er stabil:
-
-- evaluer behov for steg 7
-- vurder enkel implementasjon
-- unngå kompleksitet
-
----
+Kontroller først fakturering/Blaze, deretter sesjon og join-kode, votes, agg/live og display. Undersøk Cloud Functions-logger dersom stemmer lagres uten å bli aggregert. Ikke endre fungerende kode før feilen er lokalisert.
 
 ## Mål
 
-Et stabilt, enkelt og godt undervisningsverktøy som fungerer hver gang.
+Et stabilt, enkelt live-verktøy for undervisning. Multi prioriteres. Ingen permanent lagring av deltakerrespons eller historikk er ønsket; teknisk lagring under live-bruk beholdes.
