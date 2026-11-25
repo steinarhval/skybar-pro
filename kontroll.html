@@ -587,7 +587,7 @@
       try {
         setError("");
         setStatus("", "info");
-        const res = await App.startOrReplaceSession({ saveResults: true, programId: null });
+        const res = await App.startOrReplaceSession();
 
         activeSessionId = res.sessionId;
         activeJoinCode = res.joinCode;

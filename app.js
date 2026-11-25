@@ -311,16 +311,13 @@
       return { ownerId, activeSessionId: o.activeSessionId, activeJoinCode: o.activeJoinCode };
     },
 
-    startOrReplaceSession: async function (opts) {
+    startOrReplaceSession: async function () {
       if (!this.auth) throw new Error("Auth SDK ikke lastet i denne siden.");
       const user = this.auth.currentUser;
       if (!user) throw new Error("Ikke innlogget.");
 
       const ownerId = user.uid;
       const clientId = getOrCreateClientId();
-
-      const saveResults = (opts && typeof opts.saveResults === "boolean") ? opts.saveResults : true;
-      const programId = (opts && Object.prototype.hasOwnProperty.call(opts, "programId")) ? opts.programId : null;
 
       const ownerDocRef = this.ownerRef(ownerId);
       const ownerSnap = await ownerDocRef.get();
@@ -355,9 +352,7 @@
         startedAt: firebase.firestore.FieldValue.serverTimestamp(),
         endedAt: null,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        joinCode,
-        saveResults,
-        programId
+        joinCode
       }, { merge: false });
 
       batch.set(this.joinCodeRef(joinCode), {
