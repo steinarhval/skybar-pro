@@ -58,7 +58,7 @@
   }
 
   function makeRoundId() {
-    return "r_" + Date.now().toString(36);
+    return "r_" + db.collection("sessions").doc().id;
   }
 
   function nowMs() { return Date.now(); }
@@ -320,67 +320,70 @@
       const clientId = getOrCreateClientId();
 
       const ownerDocRef = this.ownerRef(ownerId);
-      const ownerSnap = await ownerDocRef.get();
-      const ownerData = ownerSnap.exists ? (ownerSnap.data() || {}) : {};
-
-      const oldSessionId = ownerData.activeSessionId || null;
-      const oldJoinCode = ownerData.activeJoinCode || null;
-
       const newSessionDocRef = db.collection("sessions").doc();
       const sessionId = newSessionDocRef.id;
       if (sessionId === ownerId) throw new Error("Generert sessionId var lik ownerId (ikke tillatt).");
 
       const joinCode = await generateUniqueJoinCode();
-      const batch = db.batch();
+      await db.runTransaction(async (batch) => {
+        const ownerSnap = await batch.get(ownerDocRef);
+        const ownerData = ownerSnap.data() || {};
+        const oldSessionId = ownerData.activeSessionId || null;
+        const oldJoinCode = ownerData.activeJoinCode || null;
+        const oldSession = oldSessionId ? await batch.get(this.sessionRef(oldSessionId)) : null;
+        const oldJoin = oldJoinCode ? await batch.get(this.joinCodeRef(oldJoinCode)) : null;
+        const newJoin = await batch.get(this.joinCodeRef(joinCode));
+        if (newJoin.exists) throw new Error("Join-kode kolliderte. Prøv igjen.");
 
-      if (oldSessionId) {
-        batch.set(this.sessionRef(oldSessionId), {
-          status: "ended",
-          endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        if (oldSession && oldSession.exists && oldSession.data().status === "active") {
+          batch.set(this.sessionRef(oldSessionId), {
+            status: "ended",
+            endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+
+        if (oldJoin && oldJoin.exists && oldJoin.data().sessionId === oldSessionId) {
+          batch.set(this.joinCodeRef(oldJoinCode), { active: false }, { merge: true });
+        }
+
+        batch.set(newSessionDocRef, {
+          sessionId,
+          ownerId,
+          status: "active",
+          cleanupEnabled: true,
+          startedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          endedAt: null,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          joinCode
+        }, { merge: false });
+
+        batch.set(this.joinCodeRef(joinCode), {
+          sessionId,
+          ownerId,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          active: true
+        }, { merge: false });
+
+        batch.set(ownerDocRef, {
+          activeSessionId: sessionId,
+          activeJoinCode: joinCode,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
-      }
 
-      if (oldJoinCode) {
-        batch.set(this.joinCodeRef(oldJoinCode), { active: false }, { merge: true });
-      }
+        batch.set(this.liveStateRef(sessionId), {
+          sessionId,
+          status: "idle",
+          mode: null,
+          roundId: null,
+          question: null,
 
-      batch.set(newSessionDocRef, {
-        sessionId,
-        ownerId,
-        status: "active",
-        startedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        endedAt: null,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        joinCode
-      }, { merge: false });
+          controllerId: clientId,
+          controllerTs: firebase.firestore.FieldValue.serverTimestamp(),
+          controllerLeaseUntil: leaseUntilTimestampFromNow()
+        }, { merge: false });
 
-      batch.set(this.joinCodeRef(joinCode), {
-        sessionId,
-        ownerId,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        active: true
-      }, { merge: false });
-
-      batch.set(ownerDocRef, {
-        activeSessionId: sessionId,
-        activeJoinCode: joinCode,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-
-      batch.set(this.liveStateRef(sessionId), {
-        sessionId,
-        status: "idle",
-        mode: null,
-        roundId: null,
-        question: null,
-
-        controllerId: clientId,
-        controllerTs: firebase.firestore.FieldValue.serverTimestamp(),
-        controllerLeaseUntil: leaseUntilTimestampFromNow()
-      }, { merge: false });
-
-      await batch.commit();
+      });
       return { ownerId, sessionId, joinCode };
     },
 
@@ -394,6 +397,9 @@
 
       await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
+        const sessionRef = this.sessionRef(sessionId);
+        const session = await tx.get(sessionRef);
+        if (!session.exists || session.data().status !== "active") throw new Error("Sesjonen er avsluttet.");
         if (!snap.exists) throw new Error("state/live finnes ikke.");
 
         const cur = snap.data() || {};
@@ -405,6 +411,7 @@
           throw new Error("Lease aktiv hos annen controller. Kan ikke skrive nå.");
         }
 
+        tx.update(sessionRef, { updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
         tx.set(ref, Object.assign({}, patch, {
           controllerId: myControllerId,
           controllerTs: firebase.firestore.FieldValue.serverTimestamp(),
@@ -464,30 +471,25 @@
       const ownerId = user.uid;
       const sessionRef = this.sessionRef(sessionId);
 
-      const sSnap = await sessionRef.get();
-      if (!sSnap.exists) throw new Error("Session finnes ikke.");
-      const sData = sSnap.data() || {};
-      const joinCode = sData.joinCode || null;
-
-      const batch = db.batch();
-
-      batch.set(sessionRef, {
-        status: "ended",
-        endedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-
-      if (joinCode) {
-        batch.set(this.joinCodeRef(String(joinCode).toUpperCase()), { active: false }, { merge: true });
-      }
-
-      batch.set(this.ownerRef(ownerId), {
-        activeSessionId: null,
-        activeJoinCode: null,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-
-      await batch.commit();
+      await db.runTransaction(async (tx) => {
+        const sSnap = await tx.get(sessionRef);
+        const ownerRef = this.ownerRef(ownerId);
+        const owner = await tx.get(ownerRef);
+        if (!sSnap.exists) return;
+        const sData = sSnap.data();
+        if (sData.ownerId !== ownerId) throw new Error("Ikke eier av sesjonen.");
+        const joinRef = sData.joinCode ? this.joinCodeRef(sData.joinCode) : null;
+        const join = joinRef ? await tx.get(joinRef) : null;
+        if (sData.status === "active") tx.update(sessionRef, {
+          status: "ended", endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        if (join && join.exists && join.data().sessionId === sessionId) tx.update(joinRef, { active: false });
+        if (owner.exists && owner.data().activeSessionId === sessionId) tx.update(ownerRef, {
+          activeSessionId: null, activeJoinCode: null,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
       return { ok: true };
     }
   };

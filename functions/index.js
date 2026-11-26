@@ -56,6 +56,12 @@ const roundRef = db.collection("sessions").doc(sessionId).collection("rounds").d
 const aggRef = roundRef.collection("agg").doc("live"); // ✅ riktig path
 
     await db.runTransaction(async (tx) => {
+      const sessionRef = roundRef.parent.parent;
+      const session = await tx.get(sessionRef);
+      const state = await tx.get(sessionRef.collection("state").doc("live"));
+      const currentVote = await tx.get(snap.ref);
+      if (!session.exists || session.data().status !== "active" || !state.exists ||
+          state.data().roundId !== roundId || !currentVote.exists || currentVote.data().processed === true) return;
       const aggSnap = await tx.get(aggRef);
       const prev = aggSnap.exists ? (aggSnap.data() || {}) : {};
 
@@ -97,8 +103,85 @@ const aggRef = roundRef.collection("agg").doc("live"); // ✅ riktig path
       }
 
       tx.set(aggRef, next, { merge: true });
+      tx.update(snap.ref, { processed: true });
+      tx.update(sessionRef, { updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     });
 
     return null;
 
+  });
+
+// Cleanup only for sessions created with cleanupEnabled (legacy data handled separately).
+const INACTIVE_MS = 24 * 60 * 60 * 1000;
+const timestamp = () => admin.firestore.FieldValue.serverTimestamp();
+
+async function removeOldRound(sessionRef, roundId) {
+  if (!roundId) return;
+  const state = await sessionRef.collection("state").doc("live").get();
+  if (state.exists && state.data().roundId === roundId) return;
+  // Round IDs are never reused; vote rules and aggregation guard prevent late writes.
+  await db.recursiveDelete(sessionRef.collection("rounds").doc(roundId));
+}
+
+async function removeEndedSession(ref) {
+  const snapshot = await ref.get();
+  if (!snapshot.exists || snapshot.data().cleanupEnabled !== true || snapshot.data().status !== "ended") return;
+  // Keep parent as retry marker until all descendants have been deleted successfully.
+  for (const collection of await ref.listCollections()) await db.recursiveDelete(collection);
+  await db.runTransaction(async tx => {
+    const session = await tx.get(ref);
+    if (!session.exists || session.data().status !== "ended" || session.data().cleanupEnabled !== true) return;
+    const data = session.data();
+    const ownerRef = db.collection("owners").doc(data.ownerId);
+    const joinRef = db.collection("joinCodes").doc(data.joinCode);
+    const owner = await tx.get(ownerRef);
+    const join = await tx.get(joinRef);
+    if (owner.exists && owner.data().activeSessionId === ref.id) tx.update(ownerRef, {
+      activeSessionId: null, activeJoinCode: null, updatedAt: timestamp()
+    });
+    if (join.exists && join.data().sessionId === ref.id) tx.delete(joinRef);
+    tx.delete(ref);
+  });
+}
+
+exports.onRoundChanged = functions.runWith({timeoutSeconds: 540}).firestore
+  .document("sessions/{sessionId}/state/live").onUpdate(async change => {
+    const oldRound = change.before.data().roundId;
+    if (!oldRound || oldRound === change.after.data().roundId) return;
+    const ref = change.after.ref.parent.parent;
+    const session = await ref.get();
+    if (session.exists && session.data().cleanupEnabled === true) await removeOldRound(ref, oldRound);
+  });
+
+exports.onSessionEnded = functions.runWith({timeoutSeconds: 540}).firestore
+  .document("sessions/{sessionId}").onUpdate(async change => {
+    if (change.before.data().status === "active" && change.after.data().status === "ended") {
+      await removeEndedSession(change.after.ref);
+    }
+  });
+
+exports.cleanupInactiveSessions = functions.runWith({timeoutSeconds: 540, maxInstances: 1})
+  .pubsub.schedule("every 15 minutes").onRun(async () => {
+    const sessions = await db.collection("sessions").where("cleanupEnabled", "==", true).get();
+    for (const doc of sessions.docs) {
+      try {
+        const ref = doc.ref;
+        const ended = await db.runTransaction(async tx => {
+          const current = await tx.get(ref);
+          if (!current.exists || current.data().cleanupEnabled !== true) return false;
+          const data = current.data();
+          if (data.status === "ended") return true;
+          if (data.status !== "active" || !data.updatedAt || Date.now() - data.updatedAt.toMillis() < INACTIVE_MS) return false;
+          tx.update(ref, { status: "ended", endedAt: timestamp(), updatedAt: timestamp() });
+          return true;
+        });
+        if (ended) await removeEndedSession(ref);
+        else {
+          // Retry failed round cleanup, including missing parent documents.
+          const rounds = await ref.collection("rounds").listDocuments();
+          for (const round of rounds) await removeOldRound(ref, round.id);
+        }
+      } catch (err) { console.error("Cleanup failed", doc.id, err); }
+    }
+    return null;
   });

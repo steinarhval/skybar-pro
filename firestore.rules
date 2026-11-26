@@ -29,12 +29,23 @@ service cloud.firestore {
     match /sessions/{sessionId} {
 
       // Session metadata (auth only). Display/deltaker trenger ikke lese dette nå.
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.status == "active";
+      allow update: if isSignedIn() && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && resource.data.status == "active"
+        && request.resource.data.status in ["active", "ended"]
+        && request.resource.data.get("cleanupEnabled", false) == resource.data.get("cleanupEnabled", false)
+        && request.resource.data.joinCode == resource.data.joinCode;
+      allow delete: if false;
 
       // --- Live state ---
       match /state/{docId} {
         allow read: if docId == "live";      // Display + deltaker kan lese state/live
-        allow write: if isSignedIn();        // Kun controller (auth)
+        allow write: if isSignedIn()
+          && getAfter(/databases/$(database)/documents/sessions/$(sessionId)).data.ownerId == request.auth.uid
+          && getAfter(/databases/$(database)/documents/sessions/$(sessionId)).data.status == "active";
       }
 
       // --- Rounds ---
@@ -55,6 +66,9 @@ service cloud.firestore {
           allow list: if false;
 
           allow create: if
+            get(/databases/$(database)/documents/sessions/$(sessionId)).data.status == "active"
+            && get(/databases/$(database)/documents/sessions/$(sessionId)/state/live).data.roundId == roundId
+            &&
             // kun create (ikke update)
             !exists(/databases/$(database)/documents/sessions/$(sessionId)/rounds/$(roundId)/votes/$(clientId))
             // grunnleggende struktur
