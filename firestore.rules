@@ -6,6 +6,22 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Tilgang gis kun via konsollen (eller en fremtidig betrodd backend).
+    function teacherAccess() {
+      return get(/databases/$(database)/documents/teachers/$(request.auth.uid)).data;
+    }
+
+    function isTeacher() {
+      return isSignedIn() && teacherAccess().enabled == true
+        && (teacherAccess().expiresAt == null
+          || (teacherAccess().expiresAt is timestamp && request.time < teacherAccess().expiresAt));
+    }
+
+    match /teachers/{uid} {
+      allow get: if isSignedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
     function isValidJoinCode(id) {
       return id.matches('^[A-Z0-9]{6}$');
     }
@@ -16,23 +32,41 @@ service cloud.firestore {
 
     // --- Public: join routing (read only) ---
     match /joinCodes/{joinCode} {
-      allow read: if isValidJoinCode(joinCode);
-      allow write: if isSignedIn(); // controller/admin only (kan ballestrammes mer senere per ownerId)
+      allow get: if isValidJoinCode(joinCode);
+      allow list: if false;
+      allow create: if isTeacher() && isValidJoinCode(joinCode)
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.active == true
+        && request.resource.data.keys().hasOnly(['sessionId', 'ownerId', 'createdAt', 'active'])
+        && request.resource.data.sessionId is string
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)).data.ownerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)).data.joinCode == joinCode
+        && getAfter(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)).data.status == 'active';
+      allow update: if isTeacher() && resource.data.ownerId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active'])
+        && request.resource.data.active == false;
+      allow delete: if false;
     }
 
     // --- Owners (auth only) ---
     match /owners/{ownerId} {
-      allow read, write: if isSignedIn() && request.auth.uid == ownerId;
+      allow read, write: if isTeacher() && request.auth.uid == ownerId;
     }
 
     // --- Sessions ---
     match /sessions/{sessionId} {
 
       // Session metadata (auth only). Display/deltaker trenger ikke lese dette nå.
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid
+      allow get: if isTeacher() && (!exists(/databases/$(database)/documents/sessions/$(sessionId))
+        || resource.data.ownerId == request.auth.uid);
+      allow list: if false;
+      allow create: if isTeacher() && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.sessionId == sessionId
+        && request.resource.data.cleanupEnabled == true
         && request.resource.data.status == "active";
-      allow update: if isSignedIn() && resource.data.ownerId == request.auth.uid
+      allow update: if isTeacher() && resource.data.ownerId == request.auth.uid
+        && request.resource.data.sessionId == resource.data.sessionId
         && request.resource.data.ownerId == resource.data.ownerId
         && resource.data.status == "active"
         && request.resource.data.status in ["active", "ended"]
@@ -43,7 +77,7 @@ service cloud.firestore {
       // --- Live state ---
       match /state/{docId} {
         allow read: if docId == "live";      // Display + deltaker kan lese state/live
-        allow write: if isSignedIn()
+        allow write: if isTeacher() && docId == "live"
           && getAfter(/databases/$(database)/documents/sessions/$(sessionId)).data.ownerId == request.auth.uid
           && getAfter(/databases/$(database)/documents/sessions/$(sessionId)).data.status == "active";
       }
