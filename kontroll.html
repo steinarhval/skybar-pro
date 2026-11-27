@@ -2,19 +2,26 @@
 <html lang="no">
 <head>
   <meta charset="UTF-8" />
-  <title>Kontroll</title>
+  <title>Stemmelokalet – Kontrollpanel</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="app.css" />
 </head>
 
 <body>
-  <h1>Kontrollpanel</h1>
+  <h1>Stemmelokalet – Kontrollpanel</h1>
 
   <div id="topActionsBox" class="mt20">
-    <strong>Session</strong><br><br>
+    <strong>Innlogging og tilgang</strong><br><br>
+    <div id="accountInfo" aria-live="polite">Kontrollerer innlogging …</div>
+    <br>
     <div class="btnRow">
       <button id="loginBtn">Logg inn med Google</button>
-      <button id="startSessionBtn">Start ny session</button>
+      <button id="logoutBtn" hidden>Logg ut</button>
+      <button id="switchBtn" hidden>Bytt Google-konto</button>
+      <button id="retryAccessBtn" hidden>Kontroller tilgang på nytt</button>
+    </div>
+    <div id="sessionActions" class="btnRow" hidden>
+      <button id="startSessionBtn" disabled>Start ny session</button>
       <button id="openDisplayBtn" disabled>Åpne plenum</button>
       <button id="openCollectBtn" disabled>Åpne deltakerlenke</button>
       <button id="copyJoinCodeBtn" disabled>Kopier joincode</button>
@@ -24,9 +31,9 @@
   <div id="statusBox" class="mt20" aria-live="polite"></div>
   <div id="errorBox" class="mt20"></div>
 
-  <div id="controlsBox" class="mt20"></div>
+  <div id="controlsBox" class="mt20" hidden></div>
 
-  <details id="techDetails" class="mt20">
+  <details id="techDetails" class="mt20" hidden>
     <summary><strong>Vis teknisk info</strong></summary>
     <div id="sessionBox" class="mt20"></div>
     <div id="leaseBox" class="mt20"></div>
@@ -41,6 +48,7 @@
   <script src="config.js"></script>
   <script src="app.js"></script>
 
+  <style>[hidden] { display: none !important; } #statusBox:empty, #errorBox:empty { display: none; }</style>
   <script>
     const loginBtn = document.getElementById("loginBtn");
     const startSessionBtn = document.getElementById("startSessionBtn");
@@ -55,6 +63,21 @@
     const errorBox = document.getElementById("errorBox");
     const controlsBox = document.getElementById("controlsBox");
 
+    const logoutBtn = document.getElementById("logoutBtn");
+    const switchBtn = document.getElementById("switchBtn");
+    const retryAccessBtn = document.getElementById("retryAccessBtn");
+    const accountInfo = document.getElementById("accountInfo");
+    const sessionActions = document.getElementById("sessionActions");
+    const techDetails = document.getElementById("techDetails");
+    let teacherAllowed = false;
+    let authGeneration = 0;
+    let accessGeneration = 0;
+    let accessUnsubscribe = null;
+    let expiryTimer = null;
+    let authBusy = false;
+    let startBusy = false;
+    let accessMessage = "Kontrollerer innlogging …";
+    let canRetry = false;
     let activeSessionId = null;
     let activeJoinCode = null;
 
@@ -236,7 +259,8 @@
     }
 
     function updateTopButtons() {
-      const canOpen = !!activeJoinCode;
+      const canOpen = teacherAllowed && !!activeJoinCode;
+      startSessionBtn.disabled = !teacherAllowed || startBusy;
 
       openDisplayBtn.disabled = !canOpen;
       openCollectBtn.disabled = !canOpen;
@@ -475,15 +499,18 @@
 
     function attachStateListener(sessionId) {
       if (unsubscribeState) unsubscribeState();
+      const generation = accessGeneration;
 
       unsubscribeState = App.listenLiveState(
         sessionId,
         (data) => {
+          if (!teacherAllowed || generation !== accessGeneration || activeSessionId !== sessionId) return;
           lastState = data;
           renderLease(data);
           renderControls();
         },
         (err) => {
+          if (!teacherAllowed || generation !== accessGeneration || activeSessionId !== sessionId) return;
           setError("Kunne ikke lese state/live: " + (err && err.message ? err.message : String(err)));
           setStatus("Kunne ikke lese state/live.", "err");
         }
@@ -526,12 +553,12 @@
     function shouldIgnoreHotkeys(target) {
       if (!target) return false;
       const tag = target.tagName ? target.tagName.toLowerCase() : "";
-      return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+      return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable || tag === "button" || tag === "a" || tag === "summary";
     }
 
     document.addEventListener("keydown", async (ev) => {
       if (shouldIgnoreHotkeys(ev.target)) return;
-      if (!activeSessionId) return;
+      if (!teacherAllowed || !activeSessionId) return;
 
       if (ev.code === "Space") {
         ev.preventDefault();
@@ -569,107 +596,173 @@
       }
     });
 
-    loginBtn.addEventListener("click", async () => {
+    function renderAccount() {
+      const user = App.auth.currentUser;
+      accountInfo.textContent = (user ? `Innlogget som ${user.email || user.displayName || "Google-bruker"}. ` : "") + accessMessage;
+      loginBtn.hidden = !!user;
+      logoutBtn.hidden = !user;
+      switchBtn.hidden = !user;
+      retryAccessBtn.hidden = !user || !canRetry;
+      for (const btn of [loginBtn, logoutBtn, switchBtn, retryAccessBtn]) btn.disabled = authBusy;
+      sessionActions.hidden = !teacherAllowed;
+      controlsBox.hidden = !teacherAllowed;
+      techDetails.hidden = !teacherAllowed;
+      updateTopButtons();
+    }
+
+    function clearSessionView() {
+      accessGeneration++;
+      teacherAllowed = false;
+      activeSessionId = null;
+      activeJoinCode = null;
+      lastState = null;
+      if (unsubscribeState) unsubscribeState();
+      unsubscribeState = null;
+      if (leaseTicker) clearInterval(leaseTicker);
+      leaseTicker = null;
+      controlsBox.innerHTML = "";
+      renderSessionBox();
+      renderLease(null);
+      setStatus("");
+      setError("");
+      renderAccount();
+    }
+
+    function stopAccessWatch() {
+      authGeneration++;
+      if (accessUnsubscribe) accessUnsubscribe();
+      accessUnsubscribe = null;
+      if (expiryTimer) clearTimeout(expiryTimer);
+      expiryTimer = null;
+      clearSessionView();
+    }
+
+    async function loadTeacherSession(user, generation) {
+      const access = accessGeneration;
       try {
-        setError("");
-        setStatus("", "info");
-        const user = await App.ensureSignedInWithGoogle();
-        renderUser(user);
-        setStatus("Innlogging ok.", "ok");
-      } catch (err) {
-        setError(err && err.message ? err.message : String(err));
-        setStatus("Innlogging feilet.", "err");
-        console.error(err);
-      }
-    });
-
-    startSessionBtn.addEventListener("click", async () => {
-      try {
-        setError("");
-        setStatus("", "info");
-        const res = await App.startOrReplaceSession();
-
-        activeSessionId = res.sessionId;
-        activeJoinCode = res.joinCode;
-        lastState = null;
-
-        renderSessionBox();
-        attachStateListener(res.sessionId);
-        setStatus("Ny session startet.", "ok");
-      } catch (err) {
-        const msg = (err && err.message) ? err.message : String(err);
-        setError(msg);
-        setStatus("Kunne ikke starte ny session.", "err");
-        console.error(err);
-      }
-    });
-
-    App.auth.onAuthStateChanged(async (user) => {
-      renderUser(user);
-
-      if (!user) {
-        activeSessionId = null;
-        activeJoinCode = null;
-        lastState = null;
-
-        if (unsubscribeState) unsubscribeState();
-        unsubscribeState = null;
-
-        if (leaseTicker) clearInterval(leaseTicker);
-        leaseTicker = null;
-
-        leaseBox.innerHTML = `
-          <strong>Controller lease</strong><br>
-          Ingen aktiv session.
-        `;
-        sessionBox.innerHTML = `
-          <strong>Aktiv session</strong><br>
-          Ingen aktiv session akkurat nå.
-        `;
-        controlsBox.innerHTML = `
-          <strong>Styring</strong><br>
-          Logg inn for å starte eller laste en session.
-        `;
-        statusBox.innerHTML = "";
-        setError("");
-        updateTopButtons();
-        return;
-      }
-
-      try {
-        setError("");
         const info = await App.getActiveSessionInfo(user.uid);
-
+        if (generation !== authGeneration || access !== accessGeneration || !teacherAllowed) return;
         if (info && info.activeSessionId) {
           activeSessionId = info.activeSessionId;
           activeJoinCode = info.activeJoinCode;
-
           renderSessionBox();
           attachStateListener(info.activeSessionId);
           setStatus("Aktiv session lastet.", "ok");
         } else {
-          activeSessionId = null;
-          activeJoinCode = null;
-          lastState = null;
-
           renderSessionBox();
-          leaseBox.innerHTML = `
-            <strong>Controller lease</strong><br>
-            Ingen aktiv session funnet på owner-peker.
-          `;
           renderControls();
-          setStatus("Ingen aktiv session funnet.", "warn");
         }
-      } catch (e) {
-        setError(e && e.message ? e.message : String(e));
-        setStatus("Kunne ikke lese owner-peker.", "err");
-        console.error(e);
+      } catch (err) {
+        if (generation !== authGeneration || access !== accessGeneration) return;
+        clearSessionView();
+        accessMessage = "Kunne ikke laste undervisertilgangen. Kontroller tilgang på nytt.";
+        canRetry = true;
+        renderAccount();
+        console.error(err);
       }
+    }
+
+    function watchTeacher(user) {
+      stopAccessWatch();
+      renderUser(user);
+      canRetry = false;
+      accessMessage = user ? "Kontrollerer undervisertilgang …" : "Logg inn for å bruke kontrollpanelet.";
+      renderAccount();
+      if (!user) return;
+      const generation = authGeneration;
+      accessUnsubscribe = App.teacherRef(user.uid).onSnapshot({ includeMetadataChanges: true }, snap => {
+        if (generation !== authGeneration) return;
+        if (expiryTimer) clearTimeout(expiryTimer);
+        expiryTimer = null;
+        const data = snap.exists ? snap.data() : null;
+        const expiry = data && data.expiresAt === null ? null : toMillisMaybe(data && data.expiresAt);
+        const valid = !snap.metadata.fromCache && data && data.enabled === true &&
+          (data.expiresAt === null || (expiry !== null && expiry > Date.now()));
+        if (!valid) {
+          clearSessionView();
+          canRetry = true;
+          accessMessage = snap.metadata.fromCache ? "Venter på bekreftelse fra serveren. Kontroller nettforbindelsen." :
+            "Du har ikke undervisertilgang, eller tilgangen er utløpt. Kontakt administrator.";
+          renderAccount();
+          return;
+        }
+        canRetry = false;
+        accessMessage = expiry === null ? "Permanent undervisertilgang." :
+          "Undervisertilgang til " + new Date(expiry).toLocaleString("nb-NO") + ".";
+        if (expiry !== null) {
+          const scheduleExpiry = () => {
+            if (generation !== authGeneration) return;
+            const remaining = expiry - Date.now();
+            if (remaining > 0) { expiryTimer = setTimeout(scheduleExpiry, Math.min(remaining, 2147483647)); return; }
+            clearSessionView();
+            accessMessage = "Undervisertilgangen er utløpt. Kontakt administrator.";
+            canRetry = true;
+            renderAccount();
+          };
+          expiryTimer = setTimeout(scheduleExpiry, Math.min(Math.max(0, expiry - Date.now()), 2147483647));
+        }
+        const wasAllowed = teacherAllowed;
+        teacherAllowed = true;
+        renderAccount();
+        if (!wasAllowed) loadTeacherSession(user, generation);
+      }, err => {
+        if (generation !== authGeneration) return;
+        clearSessionView();
+        accessMessage = "Kunne ikke kontrollere undervisertilgangen. Prøv igjen.";
+        canRetry = true;
+        renderAccount();
+        console.error(err);
+      });
+    }
+
+    async function accountAction(action) {
+      if (authBusy) return;
+      authBusy = true;
+      renderAccount();
+      try { setError(""); await action(); }
+      catch (err) {
+        setError("Innlogging eller kontobytte kunne ikke fullføres. Prøv igjen.");
+        console.error(err);
+      } finally { authBusy = false; renderAccount(); }
+    }
+    loginBtn.addEventListener("click", () => accountAction(() => App.ensureSignedInWithGoogle()));
+    logoutBtn.addEventListener("click", () => accountAction(() => App.signOut()));
+    // Open the Google chooser directly from the click to avoid popup blockers.
+    switchBtn.addEventListener("click", () => accountAction(async () => {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      await App.auth.signInWithPopup(provider);
+    }));
+    retryAccessBtn.addEventListener("click", () => watchTeacher(App.auth.currentUser));
+
+    startSessionBtn.addEventListener("click", async () => {
+      if (!teacherAllowed || startBusy) return;
+      startBusy = true;
+      const generation = accessGeneration;
+      updateTopButtons();
+      try {
+        setError("");
+        setStatus("");
+        const res = await App.startOrReplaceSession();
+        if (!teacherAllowed || generation !== accessGeneration) return;
+        activeSessionId = res.sessionId;
+        activeJoinCode = res.joinCode;
+        lastState = null;
+        renderSessionBox();
+        attachStateListener(res.sessionId);
+        setStatus("Ny session startet.", "ok");
+      } catch (err) {
+        if (generation !== accessGeneration) return;
+        setError(err.code === "permission-denied" ? "Du har ikke tilgang til denne handlingen." : (err.message || String(err)));
+        setStatus("Kunne ikke starte ny session.", "err");
+        console.error(err);
+      } finally { startBusy = false; updateTopButtons(); }
     });
+
+    App.auth.onAuthStateChanged(watchTeacher);
 
     renderSessionBox();
     updateTopButtons();
   </script>
 </body>
-</html>
 </html>
