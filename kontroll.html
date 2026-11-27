@@ -553,7 +553,7 @@
     function shouldIgnoreHotkeys(target) {
       if (!target) return false;
       const tag = target.tagName ? target.tagName.toLowerCase() : "";
-      return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable || tag === "button" || tag === "a" || tag === "summary";
+      return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
     }
 
     document.addEventListener("keydown", async (ev) => {
