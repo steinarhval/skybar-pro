@@ -299,9 +299,17 @@
       if (user) return user;
 
       const provider = new firebase.auth.GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
       const res = await this.auth.signInWithPopup(provider);
       return res.user;
     },
+
+    signOut: async function () {
+      if (!this.auth) throw new Error("Innlogging er ikke tilgjengelig.");
+      await this.auth.signOut();
+    },
+
+    teacherRef: (uid) => db.collection("teachers").doc(uid),
 
     getActiveSessionInfo: async function (ownerId) {
       const snap = await this.ownerRef(ownerId).get();
